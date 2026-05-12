@@ -3,7 +3,7 @@ using Amazon.CDK.Assertions;
 
 namespace CdkBase.Tests;
 
-public class UnitTest1
+public class CdkBaseStackTests
 {
     [Fact]
     public void StackSynthesis_StartsWithoutS3Buckets()
