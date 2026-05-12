@@ -1,0 +1,37 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build-test-synth-diff:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Restore
+        run: dotnet restore src/CdkBase.sln
+
+      - name: Test
+        run: dotnet test src/CdkBase.sln --no-restore
+
+      - name: CDK Synth
+        run: npx -y aws-cdk synth
+
+      - name: CDK Diff
+        run: npx -y aws-cdk diff --template cdk.out/CdkBaseStack.template.json
