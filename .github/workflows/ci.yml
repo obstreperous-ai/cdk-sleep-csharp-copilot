@@ -43,15 +43,36 @@ jobs:
           else
             BASE_SHA="${{ github.event.before }}"
           fi
+          NULL_SHA="0000000000000000000000000000000000000000"
 
-          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
-            BASE_SHA="$(git rev-parse HEAD^)"
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "$NULL_SHA" ]; then
+            if git rev-parse HEAD^ >/dev/null 2>&1; then
+              BASE_SHA="$(git rev-parse HEAD^)"
+            else
+              BASE_SHA="$(git rev-list --max-parents=0 HEAD)"
+            fi
           fi
 
-          git worktree add /tmp/cdk-base "$BASE_SHA"
-          (
-            cd /tmp/cdk-base
-            npx -y aws-cdk synth > /dev/null
-          )
+          TMP_ROOT="${RUNNER_TEMP:-/tmp}"
+          WORKTREE_DIR="${TMP_ROOT}/cdk-base-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          BASE_SYNTH_LOG="${TMP_ROOT}/cdk-base-synth.log"
+          STACK_NAME="CdkBaseStack"
 
-          npx -y aws-cdk diff --template /tmp/cdk-base/cdk.out/CdkBaseStack.template.json --fail
+          cleanup() {
+            if [ -n "${WORKTREE_DIR:-}" ]; then
+              git worktree remove "$WORKTREE_DIR" --force || true
+            fi
+          }
+          trap cleanup EXIT
+
+          git worktree add "$WORKTREE_DIR" "$BASE_SHA"
+          if ! (
+            cd "$WORKTREE_DIR"
+            dotnet restore src/CdkBase.sln
+            npx -y aws-cdk synth >"$BASE_SYNTH_LOG" 2>&1
+          ); then
+            cat "$BASE_SYNTH_LOG"
+            exit 1
+          fi
+
+          npx -y aws-cdk diff --template "$WORKTREE_DIR/cdk.out/${STACK_NAME}.template.json" --fail
