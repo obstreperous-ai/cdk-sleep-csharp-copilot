@@ -1,0 +1,78 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-synth-diff:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Restore
+        run: dotnet restore src/CdkBase.sln
+
+      - name: Test
+        run: dotnet test src/CdkBase.sln --no-restore
+
+      - name: CDK Synth
+        run: npx -y aws-cdk synth
+
+      - name: CDK Diff
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE_SHA="${{ github.event.before }}"
+          fi
+          NULL_SHA="0000000000000000000000000000000000000000"
+
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "$NULL_SHA" ]; then
+            if git rev-parse HEAD^ >/dev/null 2>&1; then
+              BASE_SHA="$(git rev-parse HEAD^)"
+            else
+              BASE_SHA="$(git rev-list --max-parents=0 HEAD)"
+            fi
+          fi
+
+          TMP_ROOT="${RUNNER_TEMP:-/tmp}"
+          WORKTREE_DIR="${TMP_ROOT}/cdk-base-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          BASE_SYNTH_LOG="${TMP_ROOT}/cdk-base-synth.log"
+          STACK_NAME="CdkBaseStack"
+
+          cleanup() {
+            if [ -n "${WORKTREE_DIR:-}" ]; then
+              git worktree remove "$WORKTREE_DIR" --force || true
+            fi
+          }
+          trap cleanup EXIT
+
+          git worktree add "$WORKTREE_DIR" "$BASE_SHA"
+          if ! (
+            cd "$WORKTREE_DIR"
+            dotnet restore src/CdkBase.sln
+            npx -y aws-cdk synth >"$BASE_SYNTH_LOG" 2>&1
+          ); then
+            cat "$BASE_SYNTH_LOG"
+            exit 1
+          fi
+
+          npx -y aws-cdk diff --template "$WORKTREE_DIR/cdk.out/${STACK_NAME}.template.json" --fail
