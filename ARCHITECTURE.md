@@ -1,13 +1,47 @@
 # Architecture — Event-Driven Sleep Audio Pipeline
 
-> **Status:** Design (source of truth). No CDK stack code is implemented for this
-> capability yet. Implementation follows test-first (TDD), one slice per issue,
-> starting with *"[3] TDD: Core S3 Buckets + EventBridge Rule"*.
+> **Status:** Partial Implementation (TDD-driven). The foundational infrastructure
+> is now implemented: S3 input/output buckets and EventBridge rule for object
+> creation events. The next slice is *"[4] TDD: Step Functions State Machine
+> Skeleton + Polly Integration"*.
 >
 > This document is the **single source of truth** for the system design. Every
 > future issue and pull request must keep the code and this document consistent.
 > If an implementation needs to diverge from this design, update this document in
 > the same pull request and explain why.
+
+## 0. Implementation Status
+
+### Completed (Issue #3)
+- ✅ **Input S3 Bucket** (`SleepAudioInputBucket`)
+  - Private, encrypted with S3-managed keys (SSE-S3)
+  - Versioning enabled
+  - EventBridge notifications enabled for Object Created events
+  - Public access blocked
+  - TLS enforced
+  - Retention policy: RETAIN
+
+- ✅ **Output S3 Bucket** (`SleepAudioOutputBucket`)
+  - Private, encrypted with S3-managed keys (SSE-S3)
+  - Versioning enabled
+  - Public access blocked
+  - TLS enforced
+  - Retention policy: RETAIN
+
+- ✅ **EventBridge Rule** (`SleepAudioInputRule`)
+  - Triggers on `Object Created` events from the Input Bucket
+  - Filters events specifically for the input bucket by name
+  - Rule is enabled
+  - Target: Not yet configured (placeholder for Step Functions)
+
+### Pending
+- Step Functions state machine
+- Lambda functions for validation, metadata extraction, persistence
+- Amazon Polly integration
+- Amazon Bedrock integration (optional, feature-flagged)
+- DynamoDB table for job metadata
+- SNS topic for notifications
+- CloudWatch alarms and observability
 
 ## 1. High-Level Overview
 
@@ -97,19 +131,23 @@ clear observability and least-privilege security.
 
 ## 4. Architecture Diagram
 
+> **Note:** Components with solid lines are implemented. Components with dashed
+> lines are pending implementation.
+
 ```mermaid
 flowchart TD
     user([User / Client]) -->|1 Upload raw audio| inputBucket
 
-    subgraph ingestion[Ingestion]
+    subgraph ingestion[✅ Ingestion - IMPLEMENTED]
         inputBucket[(S3 Input Bucket<br/>private · SSE)]
         eventBridge{{EventBridge Rule<br/>Object Created}}
         inputBucket -->|2 Object Created event| eventBridge
+        outputBucket[(S3 Output Bucket<br/>versioned · SSE)]
     end
 
-    eventBridge -->|3 Start execution| sfn
+    eventBridge -.->|3 Start execution<br/>⏳ PENDING| sfn
 
-    subgraph processing[Processing - Step Functions State Machine]
+    subgraph processing[⏳ Processing - PENDING - Step Functions State Machine]
         sfn[State Machine]
         validate[Validate input]
         metadata[Extract metadata]
@@ -117,34 +155,39 @@ flowchart TD
         persist[Persist output]
         record[Record metadata]
 
-        sfn --> validate --> metadata --> generate --> persist --> record
+        sfn -.-> validate -.-> metadata -.-> generate -.-> persist -.-> record
         validate -.->|invalid| failNotify
-        generate -->|TTS| polly[[Amazon Polly]]
-        generate -->|AI sounds / enhance| bedrock[[Amazon Bedrock]]
+        generate -.->|TTS| polly[[Amazon Polly]]
+        generate -.->|AI sounds / enhance| bedrock[[Amazon Bedrock]]
     end
 
-    persist -->|4 Write processed object| outputBucket[(S3 Output Bucket<br/>versioned · SSE)]
-    record -->|5 Upsert job item| dynamo[(DynamoDB<br/>job metadata + status)]
+    persist -.->|4 Write processed object| outputBucket
+    record -.->|5 Upsert job item| dynamo[(DynamoDB<br/>job metadata + status)]
 
-    record -->|6 Success| successNotify
+    record -.->|6 Success| successNotify
     failNotify[Build failure event]
 
-    subgraph notifications[Notifications]
+    subgraph notifications[⏳ Notifications - PENDING]
         successNotify[Publish SUCCEEDED]
-        failNotify --> snsFail[Publish FAILED]
-        successNotify --> sns([SNS Topic])
-        snsFail --> sns
+        failNotify -.-> snsFail[Publish FAILED]
+        successNotify -.-> sns([SNS Topic])
+        snsFail -.-> sns
     end
 
-    sns -->|7 Notify subscribers| subscribers([Email / Queues / Downstream])
+    sns -.->|7 Notify subscribers| subscribers([Email / Queues / Downstream])
 
-    subgraph observability[Observability]
+    subgraph observability[⏳ Observability - PENDING]
         logs[[CloudWatch Logs]]
         alarms[[CloudWatch Alarms]]
     end
 
     processing -.-> logs
     logs -.-> alarms
+
+    style ingestion fill:#d4edda,stroke:#28a745,stroke-width:3px
+    style inputBucket fill:#d4edda,stroke:#28a745,stroke-width:2px
+    style eventBridge fill:#d4edda,stroke:#28a745,stroke-width:2px
+    style outputBucket fill:#d4edda,stroke:#28a745,stroke-width:2px
 ```
 
 ## 5. Security
