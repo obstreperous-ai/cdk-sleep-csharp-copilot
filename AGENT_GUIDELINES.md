@@ -36,7 +36,6 @@ Run the same checks CI runs before opening or updating a pull request:
 dotnet restore src/CdkBase.sln
 dotnet test src/CdkBase.sln --no-restore
 npx -y aws-cdk synth
-npx -y aws-cdk diff --template cdk.out/CdkBaseStack.template.json
 ```
 
 ## Pull Request Expectations
