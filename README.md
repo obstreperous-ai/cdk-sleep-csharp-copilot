@@ -6,6 +6,11 @@ The `cdk.json` file tells the CDK Toolkit how to execute your app.
 
 It uses the [.NET CLI](https://docs.microsoft.com/dotnet/articles/core/) to compile and execute your project.
 
+## Documentation
+
+* [`ARCHITECTURE.md`](ARCHITECTURE.md) — design and source of truth for the Event-Driven Sleep Audio Pipeline (overview, data flow, and Mermaid diagram).
+* [`AGENT_GUIDELINES.md`](AGENT_GUIDELINES.md) — TDD and contributor/agent guidelines.
+
 ## Useful commands
 
 * `dotnet build src` compile this app
