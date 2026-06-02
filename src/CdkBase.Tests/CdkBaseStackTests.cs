@@ -87,8 +87,10 @@ public class CdkBaseStackTests
         var template = Template.FromStack(stack);
 
         // Act & Assert
-        // EventBridge integration is verified by the presence of the EventBridge Rule
-        // that filters on the specific bucket name
+        // Verify EventBridge integration by checking that:
+        // 1. An EventBridge Rule exists
+        // 2. The rule filters on the input bucket's name
+        // This confirms the bucket is configured to send events to EventBridge
         template.HasResourceProperties("AWS::Events::Rule", new Dictionary<string, object>
         {
             { "EventPattern", new Dictionary<string, object>

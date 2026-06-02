@@ -27,6 +27,9 @@ namespace CdkBase
             });
 
             // Output S3 Bucket for processed audio
+            // Note: EventBridge is not enabled for the output bucket because this bucket
+            // is written to by the pipeline (Step Functions/Lambda), not by external users.
+            // We don't need to trigger workflows on output writes.
             OutputBucket = new Bucket(this, "SleepAudioOutputBucket", new BucketProps
             {
                 Versioned = true,
