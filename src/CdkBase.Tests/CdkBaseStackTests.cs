@@ -1,5 +1,6 @@
 using Amazon.CDK;
 using Amazon.CDK.Assertions;
+using System;
 using System.Collections.Generic;
 
 namespace CdkBase.Tests;
@@ -175,6 +176,136 @@ public class CdkBaseStackTests
         template.HasResourceProperties("AWS::Events::Rule", new Dictionary<string, object>
         {
             { "State", "ENABLED" }
+        });
+    }
+
+    [Fact]
+    public void Stack_HasStepFunctionsStateMachine()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        template.ResourceCountIs("AWS::StepFunctions::StateMachine", 1);
+    }
+
+    [Fact]
+    public void StateMachine_HasCloudWatchLogsEnabled()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "LoggingConfiguration", new Dictionary<string, object>
+                {
+                    { "Level", "ALL" },
+                    { "IncludeExecutionData", true }
+                }
+            }
+        });
+    }
+
+    [Fact]
+    public void StateMachine_HasExecutionRole()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify the state machine has a role ARN reference
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "RoleArn", Match.ObjectLike(new Dictionary<string, object>
+                {
+                    { "Fn::GetAtt", Match.AnyValue() }
+                })
+            }
+        });
+    }
+
+    [Fact]
+    public void StateMachine_DefinitionContainsPollyTask()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify the state machine definition contains a reference to Polly service
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        var definition = capture.AsString();
+        Assert.Contains("polly", definition, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void EventBridgeRule_TargetsStateMachine()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify the EventBridge rule has a target pointing to the state machine
+        template.HasResourceProperties("AWS::Events::Rule", new Dictionary<string, object>
+        {
+            { "Targets", Match.ArrayWith(new object[]
+                {
+                    Match.ObjectLike(new Dictionary<string, object>
+                    {
+                        { "Arn", Match.ObjectLike(new Dictionary<string, object>
+                            {
+                                { "Fn::GetAtt", Match.ArrayWith(new object[] 
+                                    { 
+                                        Match.StringLikeRegexp(".*StateMachine.*") 
+                                    }) 
+                                }
+                            })
+                        }
+                    })
+                })
+            }
+        });
+    }
+
+    [Fact]
+    public void StateMachine_ExecutionRoleHasPollyPermissions()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify there's an IAM policy with Polly permissions
+        template.HasResourceProperties("AWS::IAM::Policy", new Dictionary<string, object>
+        {
+            { "PolicyDocument", Match.ObjectLike(new Dictionary<string, object>
+                {
+                    { "Statement", Match.ArrayWith(new object[]
+                        {
+                            Match.ObjectLike(new Dictionary<string, object>
+                            {
+                                { "Action", Match.ArrayWith(new object[] { Match.StringLikeRegexp("polly:.*") }) }
+                            })
+                        })
+                    }
+                })
+            }
         });
     }
 }
