@@ -6,6 +6,7 @@ using Amazon.CDK.AWS.S3.Notifications;
 using Amazon.CDK.AWS.StepFunctions;
 using Amazon.CDK.AWS.Logs;
 using Amazon.CDK.AWS.IAM;
+using Amazon.CDK.AWS.DynamoDB;
 using Constructs;
 
 namespace CdkBase
@@ -16,6 +17,7 @@ namespace CdkBase
         public IBucket OutputBucket { get; }
         public Rule EventBridgeRule { get; }
         public IStateMachine StateMachine { get; }
+        public ITable MetadataTable { get; }
 
         public CdkBaseStack(Construct scope, string id, IStackProps props = null) : base(scope, id, props)
         {
@@ -62,6 +64,26 @@ namespace CdkBase
                 Enabled = true
             });
 
+            // DynamoDB Table for Audio Pipeline Metadata
+            MetadataTable = new Table(this, "SleepAudioMetadataTable", new TableProps
+            {
+                PartitionKey = new Amazon.CDK.AWS.DynamoDB.Attribute
+                {
+                    Name = "audioId",
+                    Type = AttributeType.STRING
+                },
+                BillingMode = BillingMode.PAY_PER_REQUEST,
+                Encryption = TableEncryption.AWS_MANAGED,
+                RemovalPolicy = RemovalPolicy.RETAIN
+            });
+
+            // Enable Point-in-Time Recovery using the underlying CfnTable
+            var cfnTable = (CfnTable)MetadataTable.Node.DefaultChild;
+            cfnTable.PointInTimeRecoverySpecification = new CfnTable.PointInTimeRecoverySpecificationProperty
+            {
+                PointInTimeRecoveryEnabled = true
+            };
+
             // CloudWatch Logs for State Machine
             var stateMachineLogGroup = new Amazon.CDK.AWS.Logs.LogGroup(this, "SleepAudioPipelineStateMachineLogGroup", new Amazon.CDK.AWS.Logs.LogGroupProps
             {
@@ -73,10 +95,52 @@ namespace CdkBase
             // Define the state machine using JSON definition for a skeleton workflow
             var stateMachineDefinition = new System.Collections.Generic.Dictionary<string, object>
             {
-                { "Comment", "Sleep Audio Pipeline State Machine - skeleton with Polly task" },
-                { "StartAt", "PollyTask" },
+                { "Comment", "Sleep Audio Pipeline State Machine - skeleton with DynamoDB metadata and Polly task" },
+                { "StartAt", "InitMetadata" },
                 { "States", new System.Collections.Generic.Dictionary<string, object>
                     {
+                        { "InitMetadata", new System.Collections.Generic.Dictionary<string, object>
+                            {
+                                { "Type", "Task" },
+                                { "Resource", "arn:aws:states:::dynamodb:putItem" },
+                                { "Parameters", new System.Collections.Generic.Dictionary<string, object>
+                                    {
+                                        { "TableName", MetadataTable.TableName },
+                                        { "Item", new System.Collections.Generic.Dictionary<string, object>
+                                            {
+                                                { "audioId", new System.Collections.Generic.Dictionary<string, object>
+                                                    {
+                                                        { "S.$", "States.UUID()" }
+                                                    }
+                                                },
+                                                { "inputBucket", new System.Collections.Generic.Dictionary<string, object>
+                                                    {
+                                                        { "S.$", "$.detail.bucket.name" }
+                                                    }
+                                                },
+                                                { "inputKey", new System.Collections.Generic.Dictionary<string, object>
+                                                    {
+                                                        { "S.$", "$.detail.object.key" }
+                                                    }
+                                                },
+                                                { "status", new System.Collections.Generic.Dictionary<string, object>
+                                                    {
+                                                        { "S", "PROCESSING" }
+                                                    }
+                                                },
+                                                { "createdAt", new System.Collections.Generic.Dictionary<string, object>
+                                                    {
+                                                        { "S.$", "$$.State.EnteredTime" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                { "ResultPath", "$.metadata" },
+                                { "Next", "PollyTask" }
+                            }
+                        },
                         { "PollyTask", new System.Collections.Generic.Dictionary<string, object>
                             {
                                 { "Type", "Task" },
@@ -115,6 +179,14 @@ namespace CdkBase
                     "polly:GetSpeechSynthesisTask"
                 },
                 Resources = new[] { "*" }
+            }));
+
+            // Grant DynamoDB write permissions (least privilege)
+            stateMachineRole.AddToPolicy(new PolicyStatement(new PolicyStatementProps
+            {
+                Effect = Effect.ALLOW,
+                Actions = new[] { "dynamodb:PutItem" },
+                Resources = new[] { MetadataTable.TableArn }
             }));
 
             // Grant S3 permissions for reading input and writing output
