@@ -1,9 +1,10 @@
 # Architecture — Event-Driven Sleep Audio Pipeline
 
 > **Status:** Partial Implementation (TDD-driven). The foundational infrastructure
-> is now implemented: S3 input/output buckets and EventBridge rule for object
-> creation events. The next slice is *"[4] TDD: Step Functions State Machine
-> Skeleton + Polly Integration"*.
+> is now implemented: S3 input/output buckets, EventBridge rule for object
+> creation events, and **Step Functions state machine with Polly integration**.
+> The next slice is *"[5] TDD: DynamoDB Metadata Table + Basic State Machine
+> Input/Output Handling"*.
 >
 > This document is the **single source of truth** for the system design. Every
 > future issue and pull request must keep the code and this document consistent.
@@ -32,12 +33,34 @@
   - Triggers on `Object Created` events from the Input Bucket
   - Filters events specifically for the input bucket by name
   - Rule is enabled
-  - Target: Not yet configured (placeholder for Step Functions)
+  - Targets the Step Functions state machine
+
+### Completed (Issue #4)
+- ✅ **Step Functions State Machine** (`SleepAudioPipelineStateMachine`)
+  - Skeleton workflow with Polly integration
+  - CloudWatch Logs enabled (ALL level, execution data included)
+  - Least-privilege IAM execution role
+  - Polly Task: Uses `startSpeechSynthesisTask` API
+  - Placeholder parameters (text, voice, output format)
+  - Triggered by EventBridge rule on S3 Object Created events
+
+- ✅ **Polly Integration**
+  - State machine includes Polly task state
+  - Uses AWS SDK integration (`arn:aws:states:::aws-sdk:polly:startSpeechSynthesisTask`)
+  - Placeholder text: "This is a placeholder sleep audio text."
+  - Voice: Joanna
+  - Output format: MP3
+  - IAM permissions: `polly:StartSpeechSynthesisTask`, `polly:GetSpeechSynthesisTask`
+
+- ✅ **Orchestration Layer**
+  - EventBridge → Step Functions wiring complete
+  - S3 event data passed to state machine as input
+  - CloudWatch Logs log group created for state machine execution
+  - 7-day log retention
 
 ### Pending
-- Step Functions state machine
 - Lambda functions for validation, metadata extraction, persistence
-- Amazon Polly integration
+- Full audio processing workflow (multi-step state machine)
 - Amazon Bedrock integration (optional, feature-flagged)
 - DynamoDB table for job metadata
 - SNS topic for notifications
@@ -88,7 +111,17 @@ clear observability and least-privilege security.
    added later without touching the bucket.
 3. **Orchestrate.** EventBridge starts the **Step Functions** state machine,
    passing the bucket name and object key. The state machine owns the
-   end-to-end processing logic:
+   end-to-end processing logic.
+   
+   **Current Implementation (Issue #4 - Skeleton):**
+   - **Polly Task** — The skeleton state machine includes a single Polly task
+     that uses `startSpeechSynthesisTask` to generate MP3 audio from placeholder
+     text ("This is a placeholder sleep audio text.") using the Joanna voice.
+     The output is written to the S3 bucket specified in the event data.
+   - **CloudWatch Logs** — All state machine execution events are logged to
+     CloudWatch Logs with ALL level logging and execution data included.
+   
+   **Future Steps (Pending):**
    - **Validate** — confirm the object exists, the content type/size is within
      limits, and required metadata is present. Invalid inputs short-circuit to
      the failure path.
@@ -145,27 +178,32 @@ flowchart TD
         outputBucket[(S3 Output Bucket<br/>versioned · SSE)]
     end
 
-    eventBridge -.->|3 Start execution<br/>⏳ PENDING| sfn
+    eventBridge -->|3 Start execution| sfn
 
-    subgraph processing[⏳ Processing - PENDING - Step Functions State Machine]
-        sfn[State Machine]
-        validate[Validate input]
-        metadata[Extract metadata]
-        generate[Generate / enhance audio]
-        persist[Persist output]
-        record[Record metadata]
-
-        sfn -.-> validate -.-> metadata -.-> generate -.-> persist -.-> record
+    subgraph processing[✅ Orchestration - SKELETON IMPLEMENTED]
+        sfn[Step Functions<br/>State Machine]
+        pollyTask[Polly Task<br/>startSpeechSynthesisTask]
+        
+        sfn --> pollyTask
+        pollyTask -->|TTS| polly[[Amazon Polly]]
+        
+        validate[⏳ Validate input]
+        metadata[⏳ Extract metadata]
+        persist[⏳ Persist output]
+        record[⏳ Record metadata]
+        
+        pollyTask -.->|Future steps| validate
+        validate -.-> metadata
+        metadata -.-> persist
+        persist -.-> record
         validate -.->|invalid| failNotify
-        generate -.->|TTS| polly[[Amazon Polly]]
-        generate -.->|AI sounds / enhance| bedrock[[Amazon Bedrock]]
     end
 
-    persist -.->|4 Write processed object| outputBucket
-    record -.->|5 Upsert job item| dynamo[(DynamoDB<br/>job metadata + status)]
+    pollyTask -->|4 Write to S3| outputBucket
+    record -.->|5 Upsert job item| dynamo[(⏳ DynamoDB<br/>job metadata + status)]
 
     record -.->|6 Success| successNotify
-    failNotify[Build failure event]
+    failNotify[⏳ Build failure event]
 
     subgraph notifications[⏳ Notifications - PENDING]
         successNotify[Publish SUCCEEDED]
@@ -176,18 +214,22 @@ flowchart TD
 
     sns -.->|7 Notify subscribers| subscribers([Email / Queues / Downstream])
 
-    subgraph observability[⏳ Observability - PENDING]
-        logs[[CloudWatch Logs]]
-        alarms[[CloudWatch Alarms]]
+    subgraph observability[✅ Logging - PARTIAL]
+        logs[[CloudWatch Logs<br/>State Machine]]
+        alarms[[⏳ CloudWatch Alarms]]
     end
 
-    processing -.-> logs
+    processing --> logs
     logs -.-> alarms
 
     style ingestion fill:#d4edda,stroke:#28a745,stroke-width:3px
     style inputBucket fill:#d4edda,stroke:#28a745,stroke-width:2px
     style eventBridge fill:#d4edda,stroke:#28a745,stroke-width:2px
     style outputBucket fill:#d4edda,stroke:#28a745,stroke-width:2px
+    style processing fill:#d4edda,stroke:#28a745,stroke-width:3px
+    style sfn fill:#d4edda,stroke:#28a745,stroke-width:2px
+    style pollyTask fill:#d4edda,stroke:#28a745,stroke-width:2px
+    style logs fill:#d4edda,stroke:#28a745,stroke-width:2px
 ```
 
 ## 5. Security
