@@ -247,8 +247,9 @@ public class CdkBaseStackTests
             { "DefinitionString", capture }
         });
         
-        var definition = capture.AsString();
-        Assert.Contains("polly", definition, StringComparison.OrdinalIgnoreCase);
+        // Convert the captured value to JSON string to check its content
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        Assert.Contains("polly", definitionValue, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -307,5 +308,197 @@ public class CdkBaseStackTests
                 })
             }
         });
+    }
+
+    // ========== Issue #5: DynamoDB Metadata Table Tests ==========
+
+    [Fact]
+    public void Stack_HasDynamoDBTable()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        template.ResourceCountIs("AWS::DynamoDB::Table", 1);
+    }
+
+    [Fact]
+    public void DynamoDBTable_HasCorrectPartitionKey()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        template.HasResourceProperties("AWS::DynamoDB::Table", new Dictionary<string, object>
+        {
+            { "KeySchema", new object[]
+                {
+                    new Dictionary<string, object>
+                    {
+                        { "AttributeName", "audioId" },
+                        { "KeyType", "HASH" }
+                    }
+                }
+            },
+            { "AttributeDefinitions", new object[]
+                {
+                    new Dictionary<string, object>
+                    {
+                        { "AttributeName", "audioId" },
+                        { "AttributeType", "S" }
+                    }
+                }
+            }
+        });
+    }
+
+    [Fact]
+    public void DynamoDBTable_HasOnDemandBillingMode()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        template.HasResourceProperties("AWS::DynamoDB::Table", new Dictionary<string, object>
+        {
+            { "BillingMode", "PAY_PER_REQUEST" }
+        });
+    }
+
+    [Fact]
+    public void DynamoDBTable_HasEncryptionEnabled()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        template.HasResourceProperties("AWS::DynamoDB::Table", new Dictionary<string, object>
+        {
+            { "SSESpecification", new Dictionary<string, bool>
+                {
+                    { "SSEEnabled", true }
+                }
+            }
+        });
+    }
+
+    [Fact]
+    public void DynamoDBTable_HasPointInTimeRecoveryEnabled()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        template.HasResourceProperties("AWS::DynamoDB::Table", new Dictionary<string, object>
+        {
+            { "PointInTimeRecoverySpecification", new Dictionary<string, bool>
+                {
+                    { "PointInTimeRecoveryEnabled", true }
+                }
+            }
+        });
+    }
+
+    [Fact]
+    public void StateMachine_DefinitionContainsDynamoDBPutItem()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify the state machine definition contains DynamoDB PutItem operation
+        // The DefinitionString may be a Fn::Join when using tokens, so we check the raw JSON
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        // Convert the captured value to JSON string to check its content
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        Assert.Contains("dynamodb:putItem", definitionValue, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void StateMachine_DefinitionContainsInitMetadataState()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify the state machine definition contains InitMetadata state
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        Assert.Contains("InitMetadata", definitionValue);
+    }
+
+    [Fact]
+    public void StateMachine_ExecutionRoleHasDynamoDBWritePermissions()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify there's an IAM policy with DynamoDB write permissions
+        // Check that the policy contains the required action for the state machine role
+        template.HasResourceProperties("AWS::IAM::Policy", new Dictionary<string, object>
+        {
+            { "PolicyDocument", Match.ObjectLike(new Dictionary<string, object>
+                {
+                    { "Statement", Match.ArrayWith(new object[]
+                        {
+                            Match.ObjectLike(new Dictionary<string, object>
+                            {
+                                { "Action", "dynamodb:PutItem" },
+                                { "Effect", "Allow" }
+                            })
+                        })
+                    }
+                })
+            }
+        });
+    }
+
+    [Fact]
+    public void StateMachine_StartsWithInitMetadata()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify the state machine starts with InitMetadata state
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        // The JSON contains escaped characters, so we search for the pattern with escaping
+        Assert.Contains("StartAt", definitionValue);
+        Assert.Contains("InitMetadata", definitionValue);
     }
 }

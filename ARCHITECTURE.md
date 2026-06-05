@@ -2,9 +2,10 @@
 
 > **Status:** Partial Implementation (TDD-driven). The foundational infrastructure
 > is now implemented: S3 input/output buckets, EventBridge rule for object
-> creation events, and **Step Functions state machine with Polly integration**.
-> The next slice is *"[5] TDD: DynamoDB Metadata Table + Basic State Machine
-> Input/Output Handling"*.
+> creation events, **Step Functions state machine with Polly integration**, and
+> **DynamoDB table for audio pipeline metadata with basic I/O handling**.
+> The next slice is *"[6] TDD: SNS Notifications + Basic Error Handling & Status
+> Updates"*.
 >
 > This document is the **single source of truth** for the system design. Every
 > future issue and pull request must keep the code and this document consistent.
@@ -58,13 +59,32 @@
   - CloudWatch Logs log group created for state machine execution
   - 7-day log retention
 
+### Completed (Issue #5)
+- ✅ **DynamoDB Metadata Table** (`SleepAudioMetadataTable`)
+  - Partition key: `audioId` (string, UUID)
+  - Billing mode: PAY_PER_REQUEST (on-demand)
+  - Encryption: AWS_MANAGED (SSE)
+  - Point-in-time recovery: Enabled
+  - Removal policy: RETAIN
+  - Stores: `audioId`, `inputBucket`, `inputKey`, `status`, `createdAt`
+
+- ✅ **State Machine I/O Handling**
+  - InitMetadata state: First state in workflow
+  - Uses `dynamodb:putItem` AWS SDK integration
+  - Generates UUID for `audioId`
+  - Captures S3 event data: bucket name, object key
+  - Sets initial status: "PROCESSING"
+  - Records creation timestamp
+  - Workflow: InitMetadata → PollyTask
+  - IAM permissions: State machine role granted `dynamodb:PutItem`
+
 ### Pending
 - Lambda functions for validation, metadata extraction, persistence
 - Full audio processing workflow (multi-step state machine)
 - Amazon Bedrock integration (optional, feature-flagged)
-- DynamoDB table for job metadata
 - SNS topic for notifications
 - CloudWatch alarms and observability
+- Status updates (update DynamoDB status on completion/failure)
 
 ## 1. High-Level Overview
 
@@ -113,11 +133,16 @@ clear observability and least-privilege security.
    passing the bucket name and object key. The state machine owns the
    end-to-end processing logic.
    
-   **Current Implementation (Issue #4 - Skeleton):**
-   - **Polly Task** — The skeleton state machine includes a single Polly task
-     that uses `startSpeechSynthesisTask` to generate MP3 audio from placeholder
-     text ("This is a placeholder sleep audio text.") using the Joanna voice.
-     The output is written to the S3 bucket specified in the event data.
+   **Current Implementation (Issues #4-5 - Skeleton with Metadata):**
+   - **InitMetadata State** — The first state writes an initial metadata record
+     to DynamoDB using `dynamodb:putItem`. It generates a UUID for `audioId`,
+     captures the S3 event data (bucket name, object key), sets status to
+     "PROCESSING", and records the creation timestamp. The result is stored in
+     `$.metadata` while preserving the original input for downstream states.
+   - **Polly Task** — The skeleton state machine includes a Polly task that uses
+     `startSpeechSynthesisTask` to generate MP3 audio from placeholder text
+     ("This is a placeholder sleep audio text.") using the Joanna voice. The
+     output is written to the S3 bucket specified in the event data.
    - **CloudWatch Logs** — All state machine execution events are logged to
      CloudWatch Logs with ALL level logging and execution data included.
    
@@ -132,8 +157,8 @@ clear observability and least-privilege security.
        This branch is optional and feature-flagged per environment.
    - **Persist output** — write the processed object to the **output bucket**
      under `processed/{user_id}/{upload_id}.{ext}` with **versioning enabled**.
-   - **Record metadata** — upsert an item into **DynamoDB** with `user_id`,
-     `upload_id`, duration, status, timestamps, and output location.
+   - **Update metadata** — update the DynamoDB item with output location,
+     processing duration, and final status.
 4. **Notify.** On completion the state machine publishes to an **SNS topic**:
    a `SUCCEEDED` message with the output location, or a `FAILED` message with
    the error cause. Subscribers (email, queues, downstream services) react as
@@ -144,7 +169,13 @@ clear observability and least-privilege security.
 
 ### Status Lifecycle (DynamoDB `status`)
 
-`RECEIVED → VALIDATING → PROCESSING → SUCCEEDED`, or any stage → `FAILED`.
+`PROCESSING → SUCCEEDED`, or `PROCESSING → FAILED`.
+
+**Current Implementation:** Status is set to `PROCESSING` when the InitMetadata
+state writes the initial record.
+
+**Future:** Status will be updated to `SUCCEEDED` or `FAILED` based on the final
+outcome of the workflow.
 
 ## 3. Key AWS Services and Rationale
 
@@ -180,29 +211,33 @@ flowchart TD
 
     eventBridge -->|3 Start execution| sfn
 
-    subgraph processing[✅ Orchestration - SKELETON IMPLEMENTED]
+    subgraph processing[✅ Orchestration - SKELETON WITH METADATA]
         sfn[Step Functions<br/>State Machine]
+        initMetadata[InitMetadata<br/>dynamodb:putItem]
         pollyTask[Polly Task<br/>startSpeechSynthesisTask]
         
-        sfn --> pollyTask
+        sfn --> initMetadata
+        initMetadata -->|Write initial record| dynamo
+        initMetadata --> pollyTask
         pollyTask -->|TTS| polly[[Amazon Polly]]
         
         validate[⏳ Validate input]
         metadata[⏳ Extract metadata]
         persist[⏳ Persist output]
-        record[⏳ Record metadata]
+        updateMetadata[⏳ Update metadata]
         
         pollyTask -.->|Future steps| validate
         validate -.-> metadata
         metadata -.-> persist
-        persist -.-> record
+        persist -.-> updateMetadata
+        updateMetadata -.->|Upsert| dynamo
         validate -.->|invalid| failNotify
     end
+    
+    dynamo[(✅ DynamoDB<br/>Metadata Table<br/>audioId · status)]
 
     pollyTask -->|4 Write to S3| outputBucket
-    record -.->|5 Upsert job item| dynamo[(⏳ DynamoDB<br/>job metadata + status)]
-
-    record -.->|6 Success| successNotify
+    updateMetadata -.->|5 Success| successNotify
     failNotify[⏳ Build failure event]
 
     subgraph notifications[⏳ Notifications - PENDING]
@@ -228,7 +263,9 @@ flowchart TD
     style outputBucket fill:#d4edda,stroke:#28a745,stroke-width:2px
     style processing fill:#d4edda,stroke:#28a745,stroke-width:3px
     style sfn fill:#d4edda,stroke:#28a745,stroke-width:2px
+    style initMetadata fill:#d4edda,stroke:#28a745,stroke-width:2px
     style pollyTask fill:#d4edda,stroke:#28a745,stroke-width:2px
+    style dynamo fill:#d4edda,stroke:#28a745,stroke-width:2px
     style logs fill:#d4edda,stroke:#28a745,stroke-width:2px
 ```
 
