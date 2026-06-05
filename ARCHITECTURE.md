@@ -2,10 +2,11 @@
 
 > **Status:** Partial Implementation (TDD-driven). The foundational infrastructure
 > is now implemented: S3 input/output buckets, EventBridge rule for object
-> creation events, **Step Functions state machine with Polly integration**, and
-> **DynamoDB table for audio pipeline metadata with basic I/O handling**.
-> The next slice is *"[6] TDD: SNS Notifications + Basic Error Handling & Status
-> Updates"*.
+> creation events, **Step Functions state machine with Polly integration**,
+> **DynamoDB table for audio pipeline metadata with basic I/O handling**,
+> **SNS notifications with error handling and status updates**.
+> The next slice is *"[7] TDD: Basic Lambda Function Skeleton + Integration with
+> State Machine"*.
 >
 > This document is the **single source of truth** for the system design. Every
 > future issue and pull request must keep the code and this document consistent.
@@ -78,13 +79,40 @@
   - Workflow: InitMetadata → PollyTask
   - IAM permissions: State machine role granted `dynamodb:PutItem`
 
+### Completed (Issue #6)
+- ✅ **SNS Topics** (`SleepAudioPipelineCompletedTopic`, `SleepAudioPipelineFailedTopic`)
+  - Two SNS topics for success and failure notifications
+  - Encrypted with KMS (key rotation enabled)
+  - Display names: "Sleep Audio Pipeline Completed" and "Sleep Audio Pipeline Failed"
+  - Retention policy: RETAIN
+
+- ✅ **Error Handling and Status Updates**
+  - Catch blocks on InitMetadata and PollyTask states
+  - Error paths route to UpdateStatusFailed state
+  - UpdateStatusCompleted state: Updates DynamoDB status to "COMPLETED"
+  - UpdateStatusFailed state: Updates DynamoDB status to "FAILED"
+  - Both use `dynamodb:updateItem` AWS SDK integration
+  - Updates include `updatedAt` timestamp
+
+- ✅ **Notification Layer**
+  - NotifySuccess state: Publishes to CompletedTopic on success path
+  - NotifyFailure state: Publishes to FailedTopic on error path
+  - Uses `sns:publish` AWS SDK integration
+  - Messages include audioId for correlation
+  - IAM permissions: State machine role granted `sns:Publish`
+  - Least-privilege: Only allowed to publish to specific topics
+
+- ✅ **Updated State Machine Flow**
+  - InitMetadata → PollyTask → UpdateStatusCompleted → NotifySuccess → End
+  - Error Catch → UpdateStatusFailed → NotifyFailure → End
+  - All states have proper error handling
+
 ### Pending
 - Lambda functions for validation, metadata extraction, persistence
 - Full audio processing workflow (multi-step state machine)
 - Amazon Bedrock integration (optional, feature-flagged)
-- SNS topic for notifications
 - CloudWatch alarms and observability
-- Status updates (update DynamoDB status on completion/failure)
+- SNS topic subscriptions (email, SQS, etc.)
 
 ## 1. High-Level Overview
 
@@ -133,16 +161,27 @@ clear observability and least-privilege security.
    passing the bucket name and object key. The state machine owns the
    end-to-end processing logic.
    
-   **Current Implementation (Issues #4-5 - Skeleton with Metadata):**
+   **Current Implementation (Issues #4-6 - Skeleton with Notifications):**
    - **InitMetadata State** — The first state writes an initial metadata record
      to DynamoDB using `dynamodb:putItem`. It generates a UUID for `audioId`,
      captures the S3 event data (bucket name, object key), sets status to
      "PROCESSING", and records the creation timestamp. The result is stored in
      `$.metadata` while preserving the original input for downstream states.
+     Error handling: Catch block routes errors to UpdateStatusFailed.
    - **Polly Task** — The skeleton state machine includes a Polly task that uses
      `startSpeechSynthesisTask` to generate MP3 audio from placeholder text
      ("This is a placeholder sleep audio text.") using the Joanna voice. The
      output is written to the S3 bucket specified in the event data.
+     Error handling: Catch block routes errors to UpdateStatusFailed.
+   - **UpdateStatusCompleted** — On successful processing, updates the DynamoDB
+     record status to "COMPLETED" and sets `updatedAt` timestamp using
+     `dynamodb:updateItem`.
+   - **UpdateStatusFailed** — On error, updates the DynamoDB record status to
+     "FAILED" and sets `updatedAt` timestamp using `dynamodb:updateItem`.
+   - **NotifySuccess** — Publishes a success message to the CompletedTopic SNS
+     topic with the audioId for correlation.
+   - **NotifyFailure** — Publishes a failure message to the FailedTopic SNS
+     topic with the audioId for correlation.
    - **CloudWatch Logs** — All state machine execution events are logged to
      CloudWatch Logs with ALL level logging and execution data included.
    
@@ -157,25 +196,22 @@ clear observability and least-privilege security.
        This branch is optional and feature-flagged per environment.
    - **Persist output** — write the processed object to the **output bucket**
      under `processed/{user_id}/{upload_id}.{ext}` with **versioning enabled**.
-   - **Update metadata** — update the DynamoDB item with output location,
-     processing duration, and final status.
 4. **Notify.** On completion the state machine publishes to an **SNS topic**:
-   a `SUCCEEDED` message with the output location, or a `FAILED` message with
-   the error cause. Subscribers (email, queues, downstream services) react as
-   needed.
+   a success message to the **CompletedTopic** with the output location, or a
+   failure message to the **FailedTopic** with the error information.
+   Subscribers (email, queues, downstream services) react as needed.
 5. **Observe.** Every Lambda/state transition emits **CloudWatch Logs** and
    metrics; **CloudWatch Alarms** fire on workflow failures and error-rate or
    latency thresholds.
 
 ### Status Lifecycle (DynamoDB `status`)
 
-`PROCESSING → SUCCEEDED`, or `PROCESSING → FAILED`.
+`PROCESSING → COMPLETED`, or `PROCESSING → FAILED`.
 
-**Current Implementation:** Status is set to `PROCESSING` when the InitMetadata
-state writes the initial record.
-
-**Future:** Status will be updated to `SUCCEEDED` or `FAILED` based on the final
-outcome of the workflow.
+**Current Implementation:** 
+- Status is set to `PROCESSING` when the InitMetadata state writes the initial record.
+- Status is updated to `COMPLETED` when UpdateStatusCompleted executes.
+- Status is updated to `FAILED` when UpdateStatusFailed executes (on error path).
 
 ## 3. Key AWS Services and Rationale
 
@@ -211,43 +247,48 @@ flowchart TD
 
     eventBridge -->|3 Start execution| sfn
 
-    subgraph processing[✅ Orchestration - SKELETON WITH METADATA]
+    subgraph processing[✅ Orchestration - IMPLEMENTED WITH ERROR HANDLING]
         sfn[Step Functions<br/>State Machine]
         initMetadata[InitMetadata<br/>dynamodb:putItem]
         pollyTask[Polly Task<br/>startSpeechSynthesisTask]
+        updateCompleted[UpdateStatusCompleted<br/>dynamodb:updateItem]
+        updateFailed[UpdateStatusFailed<br/>dynamodb:updateItem]
+        notifySuccess[NotifySuccess<br/>sns:publish]
+        notifyFailure[NotifyFailure<br/>sns:publish]
         
         sfn --> initMetadata
         initMetadata -->|Write initial record| dynamo
-        initMetadata --> pollyTask
+        initMetadata -->|Success| pollyTask
+        initMetadata -->|Catch Error| updateFailed
         pollyTask -->|TTS| polly[[Amazon Polly]]
+        pollyTask -->|Success| updateCompleted
+        pollyTask -->|Catch Error| updateFailed
+        updateCompleted -->|Update status=COMPLETED| dynamo
+        updateFailed -->|Update status=FAILED| dynamo
+        updateCompleted --> notifySuccess
+        updateFailed --> notifyFailure
         
         validate[⏳ Validate input]
         metadata[⏳ Extract metadata]
         persist[⏳ Persist output]
-        updateMetadata[⏳ Update metadata]
         
-        pollyTask -.->|Future steps| validate
+        notifySuccess -.->|Future steps| validate
         validate -.-> metadata
         metadata -.-> persist
-        persist -.-> updateMetadata
-        updateMetadata -.->|Upsert| dynamo
-        validate -.->|invalid| failNotify
+        persist -.-> outputBucket
     end
     
     dynamo[(✅ DynamoDB<br/>Metadata Table<br/>audioId · status)]
 
-    pollyTask -->|4 Write to S3| outputBucket
-    updateMetadata -.->|5 Success| successNotify
-    failNotify[⏳ Build failure event]
-
-    subgraph notifications[⏳ Notifications - PENDING]
-        successNotify[Publish SUCCEEDED]
-        failNotify -.-> snsFail[Publish FAILED]
-        successNotify -.-> sns([SNS Topic])
-        snsFail -.-> sns
+    subgraph notifications[✅ Notifications - IMPLEMENTED]
+        snsCompleted([SNS CompletedTopic<br/>KMS encrypted])
+        snsFailed([SNS FailedTopic<br/>KMS encrypted])
+        notifySuccess --> snsCompleted
+        notifyFailure --> snsFailed
     end
 
-    sns -.->|7 Notify subscribers| subscribers([Email / Queues / Downstream])
+    snsCompleted -->|Notify subscribers| subscribers([Email / Queues / Downstream])
+    snsFailed -->|Notify subscribers| subscribers
 
     subgraph observability[✅ Logging - PARTIAL]
         logs[[CloudWatch Logs<br/>State Machine]]
@@ -267,9 +308,68 @@ flowchart TD
     style pollyTask fill:#d4edda,stroke:#28a745,stroke-width:2px
     style dynamo fill:#d4edda,stroke:#28a745,stroke-width:2px
     style logs fill:#d4edda,stroke:#28a745,stroke-width:2px
+    style updateCompleted fill:#d4edda,stroke:#28a745,stroke-width:2px
+    style updateFailed fill:#d4edda,stroke:#28a745,stroke-width:2px
+    style notifySuccess fill:#d4edda,stroke:#28a745,stroke-width:2px
+    style notifyFailure fill:#d4edda,stroke:#28a745,stroke-width:2px
+    style notifications fill:#d4edda,stroke:#28a745,stroke-width:3px
+    style snsCompleted fill:#d4edda,stroke:#28a745,stroke-width:2px
+    style snsFailed fill:#d4edda,stroke:#28a745,stroke-width:2px
 ```
 
-## 5. Security
+## 5. Error Handling and Notifications
+
+The state machine implements comprehensive error handling and notification mechanisms:
+
+### Error Handling Strategy
+
+- **Catch blocks:** Both `InitMetadata` and `PollyTask` states have Catch blocks that
+  capture all errors (`States.ALL`) and route them to the failure path.
+- **Error propagation:** When an error is caught, it's stored in `$.error` for debugging
+  and is available throughout the failure path.
+- **Graceful degradation:** The workflow always completes (either successfully or with
+  failure) and never leaves the DynamoDB record in an inconsistent state.
+
+### Status Updates
+
+The workflow maintains accurate status in DynamoDB throughout its lifecycle:
+
+- **PROCESSING:** Set when `InitMetadata` creates the initial record
+- **COMPLETED:** Set by `UpdateStatusCompleted` after successful processing
+- **FAILED:** Set by `UpdateStatusFailed` when an error occurs
+
+Both update states also set an `updatedAt` timestamp using the state machine's
+execution time (`$$.State.EnteredTime`).
+
+### Notification Flow
+
+#### Success Path
+1. Processing completes successfully
+2. `UpdateStatusCompleted` updates DynamoDB status to "COMPLETED"
+3. `NotifySuccess` publishes to `SleepAudioPipelineCompletedTopic`
+4. Message includes audioId for correlation
+5. Subscribers receive notification (email, SQS, Lambda, etc.)
+
+#### Failure Path
+1. An error occurs in `InitMetadata` or `PollyTask`
+2. Catch block routes to `UpdateStatusFailed`
+3. `UpdateStatusFailed` updates DynamoDB status to "FAILED"
+4. `NotifyFailure` publishes to `SleepAudioPipelineFailedTopic`
+5. Message includes audioId for correlation
+6. Subscribers receive notification for remediation
+
+### SNS Topics
+
+Both topics are encrypted with KMS (key rotation enabled) and follow least-privilege
+access patterns:
+
+- **CompletedTopic:** For successful pipeline executions
+- **FailedTopic:** For failed pipeline executions
+
+The state machine execution role has `sns:Publish` permission scoped only to these
+two specific topics.
+
+## 6. Security
 
 - **Private buckets.** Both S3 buckets block all public access. Access is via
   IAM principals only; TLS is enforced for data in transit.
