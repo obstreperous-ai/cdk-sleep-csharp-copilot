@@ -7,6 +7,8 @@ using Amazon.CDK.AWS.StepFunctions;
 using Amazon.CDK.AWS.Logs;
 using Amazon.CDK.AWS.IAM;
 using Amazon.CDK.AWS.DynamoDB;
+using Amazon.CDK.AWS.SNS;
+using Amazon.CDK.AWS.KMS;
 using Constructs;
 
 namespace CdkBase
@@ -18,6 +20,8 @@ namespace CdkBase
         public Rule EventBridgeRule { get; }
         public IStateMachine StateMachine { get; }
         public ITable MetadataTable { get; }
+        public ITopic CompletedTopic { get; }
+        public ITopic FailedTopic { get; }
 
         public CdkBaseStack(Construct scope, string id, IStackProps props = null) : base(scope, id, props)
         {
@@ -84,6 +88,28 @@ namespace CdkBase
                 PointInTimeRecoveryEnabled = true
             };
 
+            // KMS Key for SNS Topic Encryption
+            var snsKey = new Key(this, "SleepAudioPipelineSNSKey", new KeyProps
+            {
+                Description = "KMS key for Sleep Audio Pipeline SNS topic encryption",
+                EnableKeyRotation = true,
+                RemovalPolicy = RemovalPolicy.RETAIN
+            });
+
+            // SNS Topic for Pipeline Completion Notifications
+            CompletedTopic = new Topic(this, "SleepAudioPipelineCompletedTopic", new TopicProps
+            {
+                DisplayName = "Sleep Audio Pipeline Completed",
+                MasterKey = snsKey
+            });
+
+            // SNS Topic for Pipeline Failure Notifications
+            FailedTopic = new Topic(this, "SleepAudioPipelineFailedTopic", new TopicProps
+            {
+                DisplayName = "Sleep Audio Pipeline Failed",
+                MasterKey = snsKey
+            });
+
             // CloudWatch Logs for State Machine
             var stateMachineLogGroup = new Amazon.CDK.AWS.Logs.LogGroup(this, "SleepAudioPipelineStateMachineLogGroup", new Amazon.CDK.AWS.Logs.LogGroupProps
             {
@@ -91,11 +117,11 @@ namespace CdkBase
                 RemovalPolicy = RemovalPolicy.DESTROY
             });
 
-            // Step Functions State Machine with Polly Integration
+            // Step Functions State Machine with Polly Integration, Error Handling, and Notifications
             // Define the state machine using JSON definition for a skeleton workflow
             var stateMachineDefinition = new System.Collections.Generic.Dictionary<string, object>
             {
-                { "Comment", "Sleep Audio Pipeline State Machine - skeleton with DynamoDB metadata and Polly task" },
+                { "Comment", "Sleep Audio Pipeline State Machine - with error handling, SNS notifications, and status updates" },
                 { "StartAt", "InitMetadata" },
                 { "States", new System.Collections.Generic.Dictionary<string, object>
                     {
@@ -138,7 +164,17 @@ namespace CdkBase
                                     }
                                 },
                                 { "ResultPath", "$.metadata" },
-                                { "Next", "PollyTask" }
+                                { "Next", "PollyTask" },
+                                { "Catch", new object[]
+                                    {
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "ErrorEquals", new[] { "States.ALL" } },
+                                            { "ResultPath", "$.error" },
+                                            { "Next", "UpdateStatusFailed" }
+                                        }
+                                    }
+                                }
                             }
                         },
                         { "PollyTask", new System.Collections.Generic.Dictionary<string, object>
@@ -151,6 +187,131 @@ namespace CdkBase
                                         { "Text", "This is a placeholder sleep audio text." },
                                         { "VoiceId", "Joanna" },
                                         { "OutputS3BucketName.$", "$.detail.bucket.name" }
+                                    }
+                                },
+                                { "ResultPath", "$.pollyResult" },
+                                { "Next", "UpdateStatusCompleted" },
+                                { "Catch", new object[]
+                                    {
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "ErrorEquals", new[] { "States.ALL" } },
+                                            { "ResultPath", "$.error" },
+                                            { "Next", "UpdateStatusFailed" }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        { "UpdateStatusCompleted", new System.Collections.Generic.Dictionary<string, object>
+                            {
+                                { "Type", "Task" },
+                                { "Resource", "arn:aws:states:::dynamodb:updateItem" },
+                                { "Parameters", new System.Collections.Generic.Dictionary<string, object>
+                                    {
+                                        { "TableName", MetadataTable.TableName },
+                                        { "Key", new System.Collections.Generic.Dictionary<string, object>
+                                            {
+                                                { "audioId", new System.Collections.Generic.Dictionary<string, object>
+                                                    {
+                                                        { "S.$", "$.metadata.Item.audioId.S" }
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        { "UpdateExpression", "SET #status = :status, #updatedAt = :updatedAt" },
+                                        { "ExpressionAttributeNames", new System.Collections.Generic.Dictionary<string, string>
+                                            {
+                                                { "#status", "status" },
+                                                { "#updatedAt", "updatedAt" }
+                                            }
+                                        },
+                                        { "ExpressionAttributeValues", new System.Collections.Generic.Dictionary<string, object>
+                                            {
+                                                { ":status", new System.Collections.Generic.Dictionary<string, object>
+                                                    {
+                                                        { "S", "COMPLETED" }
+                                                    }
+                                                },
+                                                { ":updatedAt", new System.Collections.Generic.Dictionary<string, object>
+                                                    {
+                                                        { "S.$", "$$.State.EnteredTime" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                { "ResultPath", "$.updateResult" },
+                                { "Next", "NotifySuccess" }
+                            }
+                        },
+                        { "UpdateStatusFailed", new System.Collections.Generic.Dictionary<string, object>
+                            {
+                                { "Type", "Task" },
+                                { "Resource", "arn:aws:states:::dynamodb:updateItem" },
+                                { "Parameters", new System.Collections.Generic.Dictionary<string, object>
+                                    {
+                                        { "TableName", MetadataTable.TableName },
+                                        { "Key", new System.Collections.Generic.Dictionary<string, object>
+                                            {
+                                                { "audioId", new System.Collections.Generic.Dictionary<string, object>
+                                                    {
+                                                        { "S.$", "$.metadata.Item.audioId.S" }
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        { "UpdateExpression", "SET #status = :status, #updatedAt = :updatedAt" },
+                                        { "ExpressionAttributeNames", new System.Collections.Generic.Dictionary<string, string>
+                                            {
+                                                { "#status", "status" },
+                                                { "#updatedAt", "updatedAt" }
+                                            }
+                                        },
+                                        { "ExpressionAttributeValues", new System.Collections.Generic.Dictionary<string, object>
+                                            {
+                                                { ":status", new System.Collections.Generic.Dictionary<string, object>
+                                                    {
+                                                        { "S", "FAILED" }
+                                                    }
+                                                },
+                                                { ":updatedAt", new System.Collections.Generic.Dictionary<string, object>
+                                                    {
+                                                        { "S.$", "$$.State.EnteredTime" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                { "ResultPath", "$.updateResult" },
+                                { "Next", "NotifyFailure" }
+                            }
+                        },
+                        { "NotifySuccess", new System.Collections.Generic.Dictionary<string, object>
+                            {
+                                { "Type", "Task" },
+                                { "Resource", "arn:aws:states:::sns:publish" },
+                                { "Parameters", new System.Collections.Generic.Dictionary<string, object>
+                                    {
+                                        { "TopicArn", CompletedTopic.TopicArn },
+                                        { "Message.$", "States.Format('Sleep audio pipeline completed successfully for audioId: {}', $.metadata.Item.audioId.S)" },
+                                        { "Subject", "Sleep Audio Pipeline - Completed" }
+                                    }
+                                },
+                                { "End", true }
+                            }
+                        },
+                        { "NotifyFailure", new System.Collections.Generic.Dictionary<string, object>
+                            {
+                                { "Type", "Task" },
+                                { "Resource", "arn:aws:states:::sns:publish" },
+                                { "Parameters", new System.Collections.Generic.Dictionary<string, object>
+                                    {
+                                        { "TopicArn", FailedTopic.TopicArn },
+                                        { "Message.$", "States.Format('Sleep audio pipeline failed for audioId: {}', $.metadata.Item.audioId.S)" },
+                                        { "Subject", "Sleep Audio Pipeline - Failed" }
                                     }
                                 },
                                 { "End", true }
@@ -185,8 +346,16 @@ namespace CdkBase
             stateMachineRole.AddToPolicy(new PolicyStatement(new PolicyStatementProps
             {
                 Effect = Effect.ALLOW,
-                Actions = new[] { "dynamodb:PutItem" },
+                Actions = new[] { "dynamodb:PutItem", "dynamodb:UpdateItem" },
                 Resources = new[] { MetadataTable.TableArn }
+            }));
+
+            // Grant SNS publish permissions (least privilege)
+            stateMachineRole.AddToPolicy(new PolicyStatement(new PolicyStatementProps
+            {
+                Effect = Effect.ALLOW,
+                Actions = new[] { "sns:Publish" },
+                Resources = new[] { CompletedTopic.TopicArn, FailedTopic.TopicArn }
             }));
 
             // Grant S3 permissions for reading input and writing output
