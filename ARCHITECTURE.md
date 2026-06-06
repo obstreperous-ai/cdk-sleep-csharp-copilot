@@ -4,9 +4,11 @@
 > is now implemented: S3 input/output buckets, EventBridge rule for object
 > creation events, **Step Functions state machine with Polly integration**,
 > **DynamoDB table for audio pipeline metadata with basic I/O handling**,
-> **SNS notifications with error handling and status updates**.
-> The next slice is *"[7] TDD: Basic Lambda Function Skeleton + Integration with
-> State Machine"*.
+> **SNS notifications with error handling and status updates**,
+> **Lambda function for audio processing (placeholder skeleton)**.
+> Issue #7 (Lambda integration) is now complete.
+> The next slice is *"[8] TDD: Complete Pipeline Wiring, Input Validation &
+> Basic End-to-End Flow"*.
 >
 > This document is the **single source of truth** for the system design. Every
 > future issue and pull request must keep the code and this document consistent.
@@ -107,9 +109,41 @@
   - Error Catch → UpdateStatusFailed → NotifyFailure → End
   - All states have proper error handling
 
+### Completed (Issue #7)
+- ✅ **Lambda Function - Audio Processor** (`SleepAudioProcessorFunction`)
+  - Runtime: .NET 8 (`dotnet8`)
+  - Handler: `SleepAudioProcessor::SleepAudioProcessor.Function::FunctionHandler`
+  - Memory: 512 MB, Timeout: 30 seconds
+  - Environment variables: `TABLE_NAME` (DynamoDB table name)
+  - Purpose: Placeholder for future audio processing, metadata enrichment, or validation logic
+  - Current functionality:
+    - Receives input from state machine (metadata from InitMetadata state)
+    - Logs the input for debugging
+    - Updates DynamoDB record with `processedAt` timestamp
+    - Returns success response with status and audioId
+  - Error handling: Catches exceptions and returns error response
+
+- ✅ **Lambda Integration in State Machine**
+  - ProcessAudio state: Invokes Lambda function using `lambda:invoke` integration
+  - Position: After InitMetadata, before PollyTask
+  - Input: Full state machine context including metadata
+  - Output: Stored in `$.processorResult`
+  - Error handling: Catch block routes errors to UpdateStatusFailed
+
+- ✅ **Lambda IAM Permissions (Least Privilege)**
+  - Lambda execution role: Managed by CDK (CloudWatch Logs permissions automatic)
+  - DynamoDB access: Lambda granted `UpdateItem` permission on MetadataTable via `grantWriteData`
+  - State machine permissions: Granted `lambda:InvokeFunction` on specific Lambda ARN
+  - All IAM policies follow least-privilege principle
+
+- ✅ **Updated State Machine Flow**
+  - InitMetadata → **ProcessAudio** → PollyTask → UpdateStatusCompleted → NotifySuccess → End
+  - Error Catch on ProcessAudio → UpdateStatusFailed → NotifyFailure → End
+  - Lambda integration adds processing step between metadata initialization and audio generation
+
 ### Pending
-- Lambda functions for validation, metadata extraction, persistence
-- Full audio processing workflow (multi-step state machine)
+- Full audio processing workflow (multi-step state machine with additional Lambda functions)
+- Lambda functions for validation and metadata extraction
 - Amazon Bedrock integration (optional, feature-flagged)
 - CloudWatch alarms and observability
 - SNS topic subscriptions (email, SQS, etc.)
@@ -161,13 +195,23 @@ clear observability and least-privilege security.
    passing the bucket name and object key. The state machine owns the
    end-to-end processing logic.
    
-   **Current Implementation (Issues #4-6 - Skeleton with Notifications):**
+   **Current Implementation (Issues #4-7 - Lambda Integration with Notifications):**
    - **InitMetadata State** — The first state writes an initial metadata record
      to DynamoDB using `dynamodb:putItem`. It generates a UUID for `audioId`,
      captures the S3 event data (bucket name, object key), sets status to
      "PROCESSING", and records the creation timestamp. The result is stored in
      `$.metadata` while preserving the original input for downstream states.
      Error handling: Catch block routes errors to UpdateStatusFailed.
+   - **ProcessAudio State (Lambda)** — **NEW in Issue #7**: Invokes the
+     SleepAudioProcessor Lambda function using `lambda:invoke`. This is a
+     placeholder for future audio processing, metadata enrichment, or validation
+     logic. Currently, the Lambda:
+     - Receives the full state machine context including metadata from InitMetadata
+     - Logs the input for debugging and observability
+     - Updates the DynamoDB record with a `processedAt` timestamp
+     - Returns a success response with status and audioId
+     - Error handling: Exceptions are caught and returned as error responses;
+       Catch block routes Lambda errors to UpdateStatusFailed
    - **Polly Task** — The skeleton state machine includes a Polly task that uses
      `startSpeechSynthesisTask` to generate MP3 audio from placeholder text
      ("This is a placeholder sleep audio text.") using the Joanna voice. The
@@ -247,9 +291,11 @@ flowchart TD
 
     eventBridge -->|3 Start execution| sfn
 
-    subgraph processing[✅ Orchestration - IMPLEMENTED WITH ERROR HANDLING]
+    subgraph processing[✅ Orchestration - IMPLEMENTED WITH LAMBDA & ERROR HANDLING]
         sfn[Step Functions<br/>State Machine]
         initMetadata[InitMetadata<br/>dynamodb:putItem]
+        processAudio[ProcessAudio<br/>lambda:invoke]
+        lambdaFunc{{Lambda Function<br/>SleepAudioProcessor<br/>.NET 8}}
         pollyTask[Polly Task<br/>startSpeechSynthesisTask]
         updateCompleted[UpdateStatusCompleted<br/>dynamodb:updateItem]
         updateFailed[UpdateStatusFailed<br/>dynamodb:updateItem]
@@ -258,8 +304,12 @@ flowchart TD
         
         sfn --> initMetadata
         initMetadata -->|Write initial record| dynamo
-        initMetadata -->|Success| pollyTask
+        initMetadata -->|Success| processAudio
         initMetadata -->|Catch Error| updateFailed
+        processAudio -->|Invoke| lambdaFunc
+        lambdaFunc -->|Update metadata| dynamo
+        processAudio -->|Success| pollyTask
+        processAudio -->|Catch Error| updateFailed
         pollyTask -->|TTS| polly[[Amazon Polly]]
         pollyTask -->|Success| updateCompleted
         pollyTask -->|Catch Error| updateFailed
@@ -305,6 +355,8 @@ flowchart TD
     style processing fill:#d4edda,stroke:#28a745,stroke-width:3px
     style sfn fill:#d4edda,stroke:#28a745,stroke-width:2px
     style initMetadata fill:#d4edda,stroke:#28a745,stroke-width:2px
+    style processAudio fill:#d4edda,stroke:#28a745,stroke-width:2px
+    style lambdaFunc fill:#d4edda,stroke:#28a745,stroke-width:2px
     style pollyTask fill:#d4edda,stroke:#28a745,stroke-width:2px
     style dynamo fill:#d4edda,stroke:#28a745,stroke-width:2px
     style logs fill:#d4edda,stroke:#28a745,stroke-width:2px
