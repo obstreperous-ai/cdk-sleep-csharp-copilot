@@ -1063,6 +1063,44 @@ public class CdkBaseStackTests
     }
 
     [Fact]
+    public void StateMachine_ValidateInputSupportsCaseInsensitiveExtensions()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify ValidateInput supports both lowercase and uppercase extensions
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        
+        // Should contain both lowercase and uppercase extension patterns
+        Assert.True(
+            definitionValue.Contains(".mp3", StringComparison.Ordinal) &&
+            definitionValue.Contains(".MP3", StringComparison.Ordinal),
+            "Definition should contain both lowercase (.mp3) and uppercase (.MP3) extension patterns"
+        );
+        
+        Assert.True(
+            definitionValue.Contains(".wav", StringComparison.Ordinal) &&
+            definitionValue.Contains(".WAV", StringComparison.Ordinal),
+            "Definition should contain both lowercase (.wav) and uppercase (.WAV) extension patterns"
+        );
+        
+        Assert.True(
+            definitionValue.Contains(".m4a", StringComparison.Ordinal) &&
+            definitionValue.Contains(".M4A", StringComparison.Ordinal),
+            "Definition should contain both lowercase (.m4a) and uppercase (.M4A) extension patterns"
+        );
+    }
+
+    [Fact]
     public void StateMachine_InvalidInputRoutesToFailurePath()
     {
         // Arrange

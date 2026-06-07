@@ -325,9 +325,9 @@ clear observability and least-privilege security.
    - If either field is missing, routes to ValidationFailed → UpdateStatusFailed
 
 2. **File Extension Validation**
-   - Supported audio formats: `.mp3`, `.wav`, `.m4a`
-   - Validation uses `StringMatches` with pattern `*.{extension}`
-   - Case-sensitive matching (extensions must be lowercase)
+   - Supported audio formats: `.mp3`, `.wav`, `.m4a` (case-insensitive)
+   - Validation uses `StringMatches` with pattern `*.{extension}` for both lowercase and uppercase
+   - Accepts both lowercase (`.mp3`, `.wav`, `.m4a`) and uppercase (`.MP3`, `.WAV`, `.M4A`) extensions
    - If file extension is not in the supported list, routes to ValidationFailed
 
 3. **Validation Failure Handling**
