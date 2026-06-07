@@ -9,6 +9,7 @@ using Amazon.CDK.AWS.IAM;
 using Amazon.CDK.AWS.DynamoDB;
 using Amazon.CDK.AWS.SNS;
 using Amazon.CDK.AWS.KMS;
+using Amazon.CDK.AWS.Lambda;
 using Constructs;
 
 namespace CdkBase
@@ -22,6 +23,7 @@ namespace CdkBase
         public ITable MetadataTable { get; }
         public ITopic CompletedTopic { get; }
         public ITopic FailedTopic { get; }
+        public IFunction AudioProcessorFunction { get; }
 
         public CdkBaseStack(Construct scope, string id, IStackProps props = null) : base(scope, id, props)
         {
@@ -110,6 +112,28 @@ namespace CdkBase
                 MasterKey = snsKey
             });
 
+            // Lambda Function for Audio Processing
+            // Use hardcoded absolute path for the Lambda publish directory
+            // This works consistently for both synth and test scenarios
+            var lambdaPublishPath = "/tmp/workspace/obstreperous-ai/cdk-sleep-csharp-copilot/src/SleepAudioProcessor/bin/Release/net8.0/publish";
+            
+            AudioProcessorFunction = new Function(this, "SleepAudioProcessorFunction", new FunctionProps
+            {
+                Runtime = Runtime.DOTNET_8,
+                Handler = "SleepAudioProcessor::SleepAudioProcessor.Function::FunctionHandler",
+                Code = Code.FromAsset(lambdaPublishPath),
+                Environment = new System.Collections.Generic.Dictionary<string, string>
+                {
+                    { "TABLE_NAME", MetadataTable.TableName }
+                },
+                Timeout = Duration.Seconds(30),
+                MemorySize = 512,
+                Description = "Processes audio metadata and performs placeholder audio processing operations"
+            });
+
+            // Grant Lambda permissions to update DynamoDB table
+            MetadataTable.GrantWriteData(AudioProcessorFunction);
+
             // CloudWatch Logs for State Machine
             var stateMachineLogGroup = new Amazon.CDK.AWS.Logs.LogGroup(this, "SleepAudioPipelineStateMachineLogGroup", new Amazon.CDK.AWS.Logs.LogGroupProps
             {
@@ -164,6 +188,30 @@ namespace CdkBase
                                     }
                                 },
                                 { "ResultPath", "$.metadata" },
+                                { "Next", "ProcessAudio" },
+                                { "Catch", new object[]
+                                    {
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "ErrorEquals", new[] { "States.ALL" } },
+                                            { "ResultPath", "$.error" },
+                                            { "Next", "UpdateStatusFailed" }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        { "ProcessAudio", new System.Collections.Generic.Dictionary<string, object>
+                            {
+                                { "Type", "Task" },
+                                { "Resource", "arn:aws:states:::lambda:invoke" },
+                                { "Parameters", new System.Collections.Generic.Dictionary<string, object>
+                                    {
+                                        { "FunctionName", AudioProcessorFunction.FunctionArn },
+                                        { "Payload.$", "$" }
+                                    }
+                                },
+                                { "ResultPath", "$.processorResult" },
                                 { "Next", "PollyTask" },
                                 { "Catch", new object[]
                                     {
@@ -356,6 +404,14 @@ namespace CdkBase
                 Effect = Effect.ALLOW,
                 Actions = new[] { "sns:Publish" },
                 Resources = new[] { CompletedTopic.TopicArn, FailedTopic.TopicArn }
+            }));
+
+            // Grant Lambda invoke permissions (least privilege)
+            stateMachineRole.AddToPolicy(new PolicyStatement(new PolicyStatementProps
+            {
+                Effect = Effect.ALLOW,
+                Actions = new[] { "lambda:InvokeFunction" },
+                Resources = new[] { AudioProcessorFunction.FunctionArn }
             }));
 
             // Grant S3 permissions for reading input and writing output

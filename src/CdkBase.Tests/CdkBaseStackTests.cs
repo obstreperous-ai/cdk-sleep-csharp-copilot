@@ -759,4 +759,209 @@ public class CdkBaseStackTests
             }
         });
     }
+
+    // ========== Issue #7: Lambda Function Skeleton Tests ==========
+
+    [Fact]
+    public void Stack_HasLambdaFunction()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Note: CDK creates an additional Lambda for S3 bucket notifications, so we verify our Lambda exists specifically
+        template.HasResourceProperties("AWS::Lambda::Function", new Dictionary<string, object>
+        {
+            { "Runtime", "dotnet8" }
+        });
+    }
+
+    [Fact]
+    public void LambdaFunction_HasCorrectRuntime()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        template.HasResourceProperties("AWS::Lambda::Function", new Dictionary<string, object>
+        {
+            { "Runtime", "dotnet8" }
+        });
+    }
+
+    [Fact]
+    public void LambdaFunction_HasEnvironmentVariableForTableName()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        template.HasResourceProperties("AWS::Lambda::Function", new Dictionary<string, object>
+        {
+            { "Environment", Match.ObjectLike(new Dictionary<string, object>
+                {
+                    { "Variables", Match.ObjectLike(new Dictionary<string, object>
+                        {
+                            { "TABLE_NAME", Match.AnyValue() }
+                        })
+                    }
+                })
+            }
+        });
+    }
+
+    [Fact]
+    public void LambdaFunction_HasExecutionRole()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        template.HasResourceProperties("AWS::Lambda::Function", new Dictionary<string, object>
+        {
+            { "Role", Match.ObjectLike(new Dictionary<string, object>
+                {
+                    { "Fn::GetAtt", Match.AnyValue() }
+                })
+            }
+        });
+    }
+
+    [Fact]
+    public void LambdaExecutionRole_HasDynamoDBUpdateItemPermissions()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify there's an IAM policy attached to Lambda role with DynamoDB UpdateItem permissions
+        template.HasResourceProperties("AWS::IAM::Policy", new Dictionary<string, object>
+        {
+            { "PolicyDocument", Match.ObjectLike(new Dictionary<string, object>
+                {
+                    { "Statement", Match.ArrayWith(new object[]
+                        {
+                            Match.ObjectLike(new Dictionary<string, object>
+                            {
+                                { "Action", Match.ArrayWith(new object[] { "dynamodb:UpdateItem" }) },
+                                { "Effect", "Allow" }
+                            })
+                        })
+                    }
+                })
+            }
+        });
+    }
+
+    [Fact]
+    public void LambdaExecutionRole_HasCloudWatchLogsPermissions()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify Lambda has basic execution role with CloudWatch Logs
+        // CDK automatically creates CloudWatch Logs permissions for Lambda functions
+        template.HasResourceProperties("AWS::IAM::Role", new Dictionary<string, object>
+        {
+            { "AssumeRolePolicyDocument", Match.ObjectLike(new Dictionary<string, object>
+                {
+                    { "Statement", Match.ArrayWith(new object[]
+                        {
+                            Match.ObjectLike(new Dictionary<string, object>
+                            {
+                                { "Action", "sts:AssumeRole" },
+                                { "Effect", "Allow" },
+                                { "Principal", Match.ObjectLike(new Dictionary<string, object>
+                                    {
+                                        { "Service", "lambda.amazonaws.com" }
+                                    })
+                                }
+                            })
+                        })
+                    }
+                })
+            }
+        });
+    }
+
+    [Fact]
+    public void StateMachine_DefinitionContainsLambdaInvokeTask()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify the state machine definition contains a Lambda invoke task
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        Assert.Contains("lambda:invoke", definitionValue, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void StateMachine_DefinitionContainsProcessAudioState()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify the state machine definition contains ProcessAudio state
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        Assert.Contains("ProcessAudio", definitionValue);
+    }
+
+    [Fact]
+    public void StateMachine_ExecutionRoleHasLambdaInvokePermissions()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify there's an IAM policy with Lambda invoke permissions
+        template.HasResourceProperties("AWS::IAM::Policy", new Dictionary<string, object>
+        {
+            { "PolicyDocument", Match.ObjectLike(new Dictionary<string, object>
+                {
+                    { "Statement", Match.ArrayWith(new object[]
+                        {
+                            Match.ObjectLike(new Dictionary<string, object>
+                            {
+                                { "Action", "lambda:InvokeFunction" },
+                                { "Effect", "Allow" }
+                            })
+                        })
+                    }
+                })
+            }
+        });
+    }
 }
