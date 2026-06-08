@@ -14,6 +14,14 @@ namespace CdkBase
             // Get environment from context (defaults to "dev")
             var environmentName = app.Node.TryGetContext("environment")?.ToString() ?? "dev";
             
+            // Validate environment name against allowed values
+            var allowedEnvironments = new[] { "dev", "stage", "prod" };
+            if (!allowedEnvironments.Contains(environmentName))
+            {
+                throw new ArgumentException(
+                    $"Invalid environment '{environmentName}'. Allowed values are: {string.Join(", ", allowedEnvironments)}");
+            }
+            
             // Get account and region from environment variables or leave unset for environment-agnostic
             var account = System.Environment.GetEnvironmentVariable("CDK_DEFAULT_ACCOUNT");
             var region = System.Environment.GetEnvironmentVariable("CDK_DEFAULT_REGION");
