@@ -1551,16 +1551,95 @@ public class CdkBaseStackTests
         // Arrange & Act
         var app = new App();
         
-        // This will fail until we create the PipelineStack class
-        // For now, just verify we can create a regular stack
-        var stack = new CdkBaseStack(app, "TestStack");
+        // Create a pipeline stack
+        var pipelineStack = new PipelineStack(app, "TestPipelineStack", new StackProps());
         
         // Assert
-        Assert.NotNull(stack);
-        
-        // TODO: Once PipelineStack is created, test:
-        // var pipelineStack = new PipelineStack(app, "PipelineStack");
-        // Assert.NotNull(pipelineStack);
+        Assert.NotNull(pipelineStack);
+        var template = Template.FromStack(pipelineStack);
+        Assert.NotNull(template);
+    }
+
+    [Fact]
+    public void PipelineStack_HasCodePipeline()
+    {
+        // Arrange
+        var app = new App();
+        var pipelineStack = new PipelineStack(app, "TestPipelineStack", new StackProps());
+        var template = Template.FromStack(pipelineStack);
+
+        // Act & Assert
+        // Verify pipeline exists (CDK Pipelines creates a CodePipeline)
+        template.ResourceCountIs("AWS::CodePipeline::Pipeline", 1);
+    }
+
+    [Fact]
+    public void PipelineStack_HasSourceStage()
+    {
+        // Arrange
+        var app = new App();
+        var pipelineStack = new PipelineStack(app, "TestPipelineStack", new StackProps());
+        var template = Template.FromStack(pipelineStack);
+
+        // Act & Assert
+        // Verify pipeline has source stage configuration
+        template.HasResourceProperties("AWS::CodePipeline::Pipeline", new Dictionary<string, object>
+        {
+            { "Stages", Match.ArrayWith(new object[]
+                {
+                    Match.ObjectLike(new Dictionary<string, object>
+                    {
+                        { "Name", "Source" }
+                    })
+                })
+            }
+        });
+    }
+
+    [Fact]
+    public void PipelineStack_HasBuildStage()
+    {
+        // Arrange
+        var app = new App();
+        var pipelineStack = new PipelineStack(app, "TestPipelineStack", new StackProps());
+        var template = Template.FromStack(pipelineStack);
+
+        // Act & Assert
+        // Verify pipeline has build stage configuration
+        template.HasResourceProperties("AWS::CodePipeline::Pipeline", new Dictionary<string, object>
+        {
+            { "Stages", Match.ArrayWith(new object[]
+                {
+                    Match.ObjectLike(new Dictionary<string, object>
+                    {
+                        { "Name", "Build" }
+                    })
+                })
+            }
+        });
+    }
+
+    [Fact]
+    public void PipelineStack_HasUpdatePipelineStage()
+    {
+        // Arrange
+        var app = new App();
+        var pipelineStack = new PipelineStack(app, "TestPipelineStack", new StackProps());
+        var template = Template.FromStack(pipelineStack);
+
+        // Act & Assert
+        // Verify pipeline has UpdatePipeline stage (self-mutation)
+        template.HasResourceProperties("AWS::CodePipeline::Pipeline", new Dictionary<string, object>
+        {
+            { "Stages", Match.ArrayWith(new object[]
+                {
+                    Match.ObjectLike(new Dictionary<string, object>
+                    {
+                        { "Name", "UpdatePipeline" }
+                    })
+                })
+            }
+        });
     }
 
     // ========== Integration Tests ==========
