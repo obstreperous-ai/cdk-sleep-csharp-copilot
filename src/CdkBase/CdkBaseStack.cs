@@ -24,9 +24,18 @@ namespace CdkBase
         public ITopic CompletedTopic { get; }
         public ITopic FailedTopic { get; }
         public IFunction AudioProcessorFunction { get; }
+        public string EnvironmentName { get; }
 
-        public CdkBaseStack(Construct scope, string id, IStackProps props = null) : base(scope, id, props)
+        // Overloaded constructor for backward compatibility with existing tests
+        public CdkBaseStack(Construct scope, string id, IStackProps props = null) 
+            : this(scope, id, props, "dev")
         {
+        }
+
+        public CdkBaseStack(Construct scope, string id, IStackProps props, string environmentName) : base(scope, id, props)
+        {
+            EnvironmentName = environmentName;
+            
             // Input S3 Bucket for raw uploads
             InputBucket = new Bucket(this, "SleepAudioInputBucket", new BucketProps
             {
