@@ -188,7 +188,7 @@ namespace CdkBase
                                     }
                                 },
                                 { "ResultPath", "$.metadata" },
-                                { "Next", "ProcessAudio" },
+                                { "Next", "ValidateInput" },
                                 { "Catch", new object[]
                                     {
                                         new System.Collections.Generic.Dictionary<string, object>
@@ -199,6 +199,96 @@ namespace CdkBase
                                         }
                                     }
                                 }
+                            }
+                        },
+                        { "ValidateInput", new System.Collections.Generic.Dictionary<string, object>
+                            {
+                                { "Type", "Choice" },
+                                { "Comment", "Validate input from S3 event: check required fields and file extension" },
+                                { "Choices", new object[]
+                                    {
+                                        // Check if bucket name is missing or empty
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "Not", new System.Collections.Generic.Dictionary<string, object>
+                                                {
+                                                    { "Variable", "$.detail.bucket.name" },
+                                                    { "IsPresent", true }
+                                                }
+                                            },
+                                            { "Next", "ValidationFailed" }
+                                        },
+                                        // Check if object key is missing or empty
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "Not", new System.Collections.Generic.Dictionary<string, object>
+                                                {
+                                                    { "Variable", "$.detail.object.key" },
+                                                    { "IsPresent", true }
+                                                }
+                                            },
+                                            { "Next", "ValidationFailed" }
+                                        },
+                                        // Check if file extension is .mp3 (lowercase)
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "Variable", "$.detail.object.key" },
+                                            { "StringMatches", "*.mp3" },
+                                            { "Next", "ProcessAudio" }
+                                        },
+                                        // Check if file extension is .MP3 (uppercase)
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "Variable", "$.detail.object.key" },
+                                            { "StringMatches", "*.MP3" },
+                                            { "Next", "ProcessAudio" }
+                                        },
+                                        // Check if file extension is .wav (lowercase)
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "Variable", "$.detail.object.key" },
+                                            { "StringMatches", "*.wav" },
+                                            { "Next", "ProcessAudio" }
+                                        },
+                                        // Check if file extension is .WAV (uppercase)
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "Variable", "$.detail.object.key" },
+                                            { "StringMatches", "*.WAV" },
+                                            { "Next", "ProcessAudio" }
+                                        },
+                                        // Check if file extension is .m4a (lowercase)
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "Variable", "$.detail.object.key" },
+                                            { "StringMatches", "*.m4a" },
+                                            { "Next", "ProcessAudio" }
+                                        },
+                                        // Check if file extension is .M4A (uppercase)
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "Variable", "$.detail.object.key" },
+                                            { "StringMatches", "*.M4A" },
+                                            { "Next", "ProcessAudio" }
+                                        }
+                                    }
+                                },
+                                // Default path if no conditions match - unsupported file type
+                                { "Default", "ValidationFailed" }
+                            }
+                        },
+                        { "ValidationFailed", new System.Collections.Generic.Dictionary<string, object>
+                            {
+                                { "Type", "Pass" },
+                                { "Comment", "Mark validation failure and prepare error information" },
+                                { "Result", new System.Collections.Generic.Dictionary<string, object>
+                                    {
+                                        { "Error", "ValidationError" },
+                                        { "Cause", "Invalid input: missing required fields or unsupported file type" }
+                                    }
+                                },
+                                { "ResultPath", "$.error" },
+                                { "Next", "UpdateStatusFailed" }
                             }
                         },
                         { "ProcessAudio", new System.Collections.Generic.Dictionary<string, object>

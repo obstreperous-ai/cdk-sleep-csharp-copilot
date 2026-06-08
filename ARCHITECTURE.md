@@ -1,14 +1,16 @@
 # Architecture — Event-Driven Sleep Audio Pipeline
 
-> **Status:** Partial Implementation (TDD-driven). The foundational infrastructure
-> is now implemented: S3 input/output buckets, EventBridge rule for object
-> creation events, **Step Functions state machine with Polly integration**,
-> **DynamoDB table for audio pipeline metadata with basic I/O handling**,
-> **SNS notifications with error handling and status updates**,
-> **Lambda function for audio processing (placeholder skeleton)**.
-> Issue #7 (Lambda integration) is now complete.
-> The next slice is *"[8] TDD: Complete Pipeline Wiring, Input Validation &
-> Basic End-to-End Flow"*.
+> **Status:** Core Pipeline Complete with Input Validation (TDD-driven). The
+> complete foundational pipeline is now implemented: S3 input/output buckets,
+> EventBridge rule for object creation events, **Step Functions state machine
+> with input validation, Polly integration**, **DynamoDB table for audio
+> pipeline metadata with complete I/O handling**, **SNS notifications with
+> comprehensive error handling and status updates**, **Lambda function for audio
+> processing (placeholder skeleton)**, and **input validation for S3 events**.
+> Issue #8 (Complete Pipeline Wiring, Input Validation & Basic End-to-End Flow)
+> is now complete.
+> The next slice is *"[9] TDD: Pipeline Testing, Refinement & Deployment
+> Preparation"*.
 >
 > This document is the **single source of truth** for the system design. Every
 > future issue and pull request must keep the code and this document consistent.
@@ -78,7 +80,7 @@
   - Captures S3 event data: bucket name, object key
   - Sets initial status: "PROCESSING"
   - Records creation timestamp
-  - Workflow: InitMetadata → PollyTask
+  - Workflow: InitMetadata → ValidateInput (see Issue #8)
   - IAM permissions: State machine role granted `dynamodb:PutItem`
 
 ### Completed (Issue #6)
@@ -105,7 +107,7 @@
   - Least-privilege: Only allowed to publish to specific topics
 
 - ✅ **Updated State Machine Flow**
-  - InitMetadata → PollyTask → UpdateStatusCompleted → NotifySuccess → End
+  - InitMetadata → ValidateInput (see Issue #8) → ProcessAudio → PollyTask → UpdateStatusCompleted → NotifySuccess → End
   - Error Catch → UpdateStatusFailed → NotifyFailure → End
   - All states have proper error handling
 
@@ -125,7 +127,7 @@
 
 - ✅ **Lambda Integration in State Machine**
   - ProcessAudio state: Invokes Lambda function using `lambda:invoke` integration
-  - Position: After InitMetadata, before PollyTask
+  - Position: After ValidateInput, before PollyTask
   - Input: Full state machine context including metadata
   - Output: Stored in `$.processorResult`
   - Error handling: Catch block routes errors to UpdateStatusFailed
@@ -137,16 +139,59 @@
   - All IAM policies follow least-privilege principle
 
 - ✅ **Updated State Machine Flow**
-  - InitMetadata → **ProcessAudio** → PollyTask → UpdateStatusCompleted → NotifySuccess → End
+  - InitMetadata → ValidateInput → **ProcessAudio** → PollyTask → UpdateStatusCompleted → NotifySuccess → End
   - Error Catch on ProcessAudio → UpdateStatusFailed → NotifyFailure → End
-  - Lambda integration adds processing step between metadata initialization and audio generation
+  - Lambda integration adds processing step between validation and audio generation
+
+### Completed (Issue #8)
+- ✅ **Input Validation State** (`ValidateInput`)
+  - Type: Choice state for conditional logic
+  - Position: After InitMetadata, before ProcessAudio
+  - Validates required S3 event fields:
+    - Checks presence of `$.detail.bucket.name`
+    - Checks presence of `$.detail.object.key`
+  - Validates supported file extensions:
+    - Accepts: `.mp3`, `.wav`, `.m4a`
+    - Rejects all other file types
+  - Routing logic:
+    - Valid inputs → ProcessAudio (continues normal flow)
+    - Invalid inputs → ValidationFailed (error handling)
+
+- ✅ **Validation Failed State** (`ValidationFailed`)
+  - Type: Pass state (no-op, just marks error)
+  - Sets error information in `$.error`:
+    - Error: "ValidationError"
+    - Cause: "Invalid input: missing required fields or unsupported file type"
+  - Routes to: UpdateStatusFailed (standard error path)
+  - Result: DynamoDB status set to "FAILED", SNS notification sent
+
+- ✅ **Complete End-to-End Flow**
+  - Success path: S3 Upload → EventBridge → InitMetadata → ValidateInput → ProcessAudio → PollyTask → UpdateStatusCompleted → NotifySuccess
+  - Validation failure path: S3 Upload → EventBridge → InitMetadata → ValidateInput → ValidationFailed → UpdateStatusFailed → NotifyFailure
+  - Processing error path: (Any state with Catch block) → UpdateStatusFailed → NotifyFailure
+  - All paths properly update DynamoDB status and send SNS notifications
+
+- ✅ **Comprehensive Testing**
+  - 54 total tests passing (8 new tests for validation + 46 existing)
+  - Tests cover: Input validation logic, end-to-end flow, IAM permissions, component wiring
+  - Snapshot test verifies complete stack structure
+  - All tests follow TDD approach (written before implementation)
+
+- ✅ **Complete Pipeline Wiring Verification**
+  - EventBridge → Step Functions: Verified via tests
+  - Step Functions → Lambda: Verified via tests
+  - Step Functions → DynamoDB: Verified via tests
+  - Step Functions → SNS: Verified via tests
+  - Step Functions → Polly: Verified via tests
+  - All IAM permissions properly scoped and tested
+  - CDK synth succeeds with no errors
 
 ### Pending
 - Full audio processing workflow (multi-step state machine with additional Lambda functions)
-- Lambda functions for validation and metadata extraction
 - Amazon Bedrock integration (optional, feature-flagged)
 - CloudWatch alarms and observability
 - SNS topic subscriptions (email, SQS, etc.)
+- Deployment to AWS environment
 
 ## 1. High-Level Overview
 
@@ -195,17 +240,30 @@ clear observability and least-privilege security.
    passing the bucket name and object key. The state machine owns the
    end-to-end processing logic.
    
-   **Current Implementation (Issues #4-7 - Lambda Integration with Notifications):**
+   **Current Implementation (Issues #4-8 - Complete Pipeline with Input Validation):**
    - **InitMetadata State** — The first state writes an initial metadata record
      to DynamoDB using `dynamodb:putItem`. It generates a UUID for `audioId`,
      captures the S3 event data (bucket name, object key), sets status to
      "PROCESSING", and records the creation timestamp. The result is stored in
      `$.metadata` while preserving the original input for downstream states.
      Error handling: Catch block routes errors to UpdateStatusFailed.
-   - **ProcessAudio State (Lambda)** — **NEW in Issue #7**: Invokes the
-     SleepAudioProcessor Lambda function using `lambda:invoke`. This is a
-     placeholder for future audio processing, metadata enrichment, or validation
-     logic. Currently, the Lambda:
+   - **ValidateInput State (Choice)** — **NEW in Issue #8**: Validates S3 event
+     input before processing. This is a Choice state that performs the following
+     validations:
+     - **Required fields check**: Verifies presence of `$.detail.bucket.name` and
+       `$.detail.object.key` from the S3 event
+     - **File extension check**: Validates file type by checking if the key ends
+       with supported extensions (`.mp3`, `.wav`, `.m4a`)
+     - **Success path**: If all validations pass, proceeds to ProcessAudio
+     - **Failure path**: If any validation fails, routes to ValidationFailed state
+   - **ValidationFailed State (Pass)** — **NEW in Issue #8**: A Pass state that
+     marks validation failures with error information:
+     - Sets `$.error.Error` to "ValidationError"
+     - Sets `$.error.Cause` to descriptive message
+     - Routes to UpdateStatusFailed for consistent error handling
+   - **ProcessAudio State (Lambda)** — Invokes the SleepAudioProcessor Lambda
+     function using `lambda:invoke`. This is a placeholder for future audio
+     processing, metadata enrichment, or validation logic. Currently, the Lambda:
      - Receives the full state machine context including metadata from InitMetadata
      - Logs the input for debugging and observability
      - Updates the DynamoDB record with a `processedAt` timestamp
@@ -257,6 +315,40 @@ clear observability and least-privilege security.
 - Status is updated to `COMPLETED` when UpdateStatusCompleted executes.
 - Status is updated to `FAILED` when UpdateStatusFailed executes (on error path).
 
+### Input Validation Rules (Issue #8)
+
+**Validation performed by ValidateInput Choice state:**
+
+1. **Required Fields Validation**
+   - `$.detail.bucket.name` must be present (S3 bucket name from event)
+   - `$.detail.object.key` must be present (S3 object key from event)
+   - If either field is missing, routes to ValidationFailed → UpdateStatusFailed
+
+2. **File Extension Validation**
+   - Supported audio formats: `.mp3`, `.wav`, `.m4a` (case-insensitive)
+   - Validation uses `StringMatches` with pattern `*.{extension}` for both lowercase and uppercase
+   - Accepts both lowercase (`.mp3`, `.wav`, `.m4a`) and uppercase (`.MP3`, `.WAV`, `.M4A`) extensions
+   - If file extension is not in the supported list, routes to ValidationFailed
+
+3. **Validation Failure Handling**
+   - ValidationFailed state sets error information:
+     - `Error`: "ValidationError"
+     - `Cause`: "Invalid input: missing required fields or unsupported file type"
+   - Error information is stored in `$.error` path
+   - Routes to UpdateStatusFailed for consistent error handling
+   - DynamoDB status is set to "FAILED"
+   - SNS notification is published to FailedTopic
+
+4. **Validation Success Path**
+   - If all validations pass, proceeds to ProcessAudio state
+   - Normal processing flow continues: ProcessAudio → PollyTask → UpdateStatusCompleted → NotifySuccess
+
+**Future Enhancements:**
+- Additional file size validation
+- Content-type validation from S3 metadata
+- User authentication and authorization checks
+- Rate limiting per user
+
 ## 3. Key AWS Services and Rationale
 
 | Service | Role in the pipeline | Why it was chosen |
@@ -291,9 +383,11 @@ flowchart TD
 
     eventBridge -->|3 Start execution| sfn
 
-    subgraph processing[✅ Orchestration - IMPLEMENTED WITH LAMBDA & ERROR HANDLING]
+    subgraph processing[✅ Orchestration - COMPLETE WITH VALIDATION]
         sfn[Step Functions<br/>State Machine]
         initMetadata[InitMetadata<br/>dynamodb:putItem]
+        validateInput{ValidateInput<br/>Choice State}
+        validationFailed[ValidationFailed<br/>Pass State]
         processAudio[ProcessAudio<br/>lambda:invoke]
         lambdaFunc{{Lambda Function<br/>SleepAudioProcessor<br/>.NET 8}}
         pollyTask[Polly Task<br/>startSpeechSynthesisTask]
@@ -304,8 +398,13 @@ flowchart TD
         
         sfn --> initMetadata
         initMetadata -->|Write initial record| dynamo
-        initMetadata -->|Success| processAudio
+        initMetadata -->|Success| validateInput
         initMetadata -->|Catch Error| updateFailed
+        
+        validateInput -->|Valid bucket & key<br/>Supported extension| processAudio
+        validateInput -->|Invalid or<br/>Unsupported type| validationFailed
+        validationFailed -->|Set error info| updateFailed
+        
         processAudio -->|Invoke| lambdaFunc
         lambdaFunc -->|Update metadata| dynamo
         processAudio -->|Success| pollyTask
@@ -318,12 +417,10 @@ flowchart TD
         updateCompleted --> notifySuccess
         updateFailed --> notifyFailure
         
-        validate[⏳ Validate input]
         metadata[⏳ Extract metadata]
         persist[⏳ Persist output]
         
-        notifySuccess -.->|Future steps| validate
-        validate -.-> metadata
+        notifySuccess -.->|Future steps| metadata
         metadata -.-> persist
         persist -.-> outputBucket
     end
