@@ -33,6 +33,30 @@ public class Function
     }
 
     /// <summary>
+    /// Helper method to log structured JSON messages
+    /// </summary>
+    private void LogStructured(ILambdaContext context, string level, string message, object? data = null)
+    {
+        var logEntry = new Dictionary<string, object>
+        {
+            { "timestamp", DateTime.UtcNow.ToString("o") },
+            { "level", level },
+            { "message", message },
+            { "requestId", context.AwsRequestId },
+            { "functionName", context.FunctionName },
+            { "functionVersion", context.FunctionVersion }
+        };
+
+        if (data != null)
+        {
+            logEntry["data"] = data;
+        }
+
+        var logJson = JsonSerializer.Serialize(logEntry);
+        context.Logger.LogInformation(logJson);
+    }
+
+    /// <summary>
     /// Lambda function handler that processes audio metadata from the state machine.
     /// This is a placeholder for future audio processing, metadata enrichment, or validation logic.
     /// </summary>
@@ -43,8 +67,8 @@ public class Function
     {
         try
         {
-            // Log the input for debugging
-            context.Logger.LogInformation($"Processing input: {JsonSerializer.Serialize(input)}");
+            // Log the input for debugging with structured logging
+            LogStructured(context, "INFO", "Processing audio pipeline request", new { inputKeys = input.Keys });
             
             // Extract audioId from metadata (set by InitMetadata state)
             string? audioId = null;
@@ -73,11 +97,11 @@ public class Function
 
             if (string.IsNullOrEmpty(audioId))
             {
-                context.Logger.LogError("audioId not found in input");
+                LogStructured(context, "ERROR", "audioId not found in input", new { inputKeys = input.Keys });
                 throw new InvalidOperationException("audioId not found in input metadata");
             }
 
-            context.Logger.LogInformation($"Processing audio with ID: {audioId}");
+            LogStructured(context, "INFO", "Processing audio", new { audioId });
 
             // Future: Perform audio processing, metadata enrichment, or validation
             // For now, just update the DynamoDB record with processing timestamp
@@ -92,13 +116,17 @@ public class Function
                 { "processedAt", DateTime.UtcNow.ToString("o") }
             };
 
-            context.Logger.LogInformation($"Processing complete: {JsonSerializer.Serialize(response)}");
+            LogStructured(context, "INFO", "Processing complete", new { audioId, status = "success" });
             return response;
         }
         catch (Exception ex)
         {
-            context.Logger.LogError($"Error processing audio: {ex.Message}");
-            context.Logger.LogError($"Stack trace: {ex.StackTrace}");
+            LogStructured(context, "ERROR", "Error processing audio", new 
+            { 
+                error = ex.Message, 
+                errorType = ex.GetType().Name,
+                stackTrace = ex.StackTrace
+            });
             
             // Return error response
             return new Dictionary<string, object>
@@ -132,11 +160,16 @@ public class Function
             };
 
             await _dynamoDbClient.UpdateItemAsync(updateRequest);
-            context.Logger.LogInformation($"Updated metadata for audioId: {audioId}");
+            LogStructured(context, "INFO", "Updated metadata", new { audioId, tableName = _tableName });
         }
         catch (Exception ex)
         {
-            context.Logger.LogError($"Failed to update metadata: {ex.Message}");
+            LogStructured(context, "ERROR", "Failed to update metadata", new 
+            { 
+                audioId, 
+                tableName = _tableName,
+                error = ex.Message 
+            });
             throw;
         }
     }
