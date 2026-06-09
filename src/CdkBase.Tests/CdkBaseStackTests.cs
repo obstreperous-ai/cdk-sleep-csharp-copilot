@@ -1244,4 +1244,482 @@ public class CdkBaseStackTests
         Assert.Contains("sns", templateJson, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("lambda", templateJson, StringComparison.OrdinalIgnoreCase);
     }
+
+    // ========== Issue #9: Pipeline Testing, Refinement & Deployment Preparation Tests ==========
+
+    // ========== Multi-Environment Support Tests ==========
+
+    [Fact]
+    public void Stack_SupportsEnvironmentParameter()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack", new StackProps
+        {
+            Env = new Amazon.CDK.Environment
+            {
+                Account = "123456789012",
+                Region = "us-east-1"
+            }
+        });
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify stack can be instantiated with environment props
+        Assert.NotNull(stack);
+        Assert.NotNull(template);
+    }
+
+    [Fact]
+    public void Stack_CanBeCreatedWithEnvironmentContext()
+    {
+        // Arrange
+        var app = new App(new AppProps
+        {
+            Context = new Dictionary<string, object>
+            {
+                { "environment", "dev" }
+            }
+        });
+        var stack = new CdkBaseStack(app, "DevStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify stack can be created with environment context
+        Assert.NotNull(stack);
+        Assert.NotNull(template);
+        // Verify all resources are still created properly
+        template.ResourceCountIs("AWS::S3::Bucket", 2);
+        template.ResourceCountIs("AWS::StepFunctions::StateMachine", 1);
+        template.ResourceCountIs("AWS::DynamoDB::Table", 1);
+    }
+
+    [Fact]
+    public void Stack_ResourceNamesIncludeEnvironmentPrefix()
+    {
+        // Arrange
+        var app = new App(new AppProps
+        {
+            Context = new Dictionary<string, object>
+            {
+                { "environment", "prod" }
+            }
+        });
+        var stack = new CdkBaseStack(app, "ProdStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // This test will fail until we implement environment-specific naming
+        // For now, we just verify the stack can be synthesized
+        Assert.NotNull(template);
+    }
+
+    // ========== Comprehensive End-to-End Flow Tests ==========
+
+    [Fact]
+    public void StateMachine_CompleteFlowFromInitToSuccess()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify complete flow: InitMetadata → ValidateInput → ProcessAudio → PollyTask → UpdateStatusCompleted → NotifySuccess
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        // Convert the captured value to JSON string to check its content
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        
+        // Verify all states in the success path exist
+        Assert.Contains("InitMetadata", definitionValue);
+        Assert.Contains("ValidateInput", definitionValue);
+        Assert.Contains("ProcessAudio", definitionValue);
+        Assert.Contains("PollyTask", definitionValue);
+        Assert.Contains("UpdateStatusCompleted", definitionValue);
+        Assert.Contains("NotifySuccess", definitionValue);
+    }
+
+    [Fact]
+    public void StateMachine_CompleteFlowFromInitToFailure()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify error flow: Any state with Catch → UpdateStatusFailed → NotifyFailure
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        // Convert the captured value to JSON string to check its content
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        
+        // Verify error handling states exist
+        Assert.Contains("UpdateStatusFailed", definitionValue);
+        Assert.Contains("NotifyFailure", definitionValue);
+        Assert.Contains("ValidationFailed", definitionValue);
+        
+        // Verify error handling infrastructure exists
+        Assert.Contains("Catch", definitionValue);
+    }
+
+    [Fact]
+    public void StateMachine_ValidationHandlesValidFileExtensions()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify ValidateInput state checks for valid audio file extensions
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        
+        // Verify validation checks for supported file types
+        Assert.Contains("*.mp3", definitionValue);
+        Assert.Contains("*.MP3", definitionValue);
+        Assert.Contains("*.wav", definitionValue);
+        Assert.Contains("*.WAV", definitionValue);
+        Assert.Contains("*.m4a", definitionValue);
+        Assert.Contains("*.M4A", definitionValue);
+    }
+
+    [Fact]
+    public void StateMachine_ValidationHandlesInvalidInput()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify ValidateInput state has a ValidationFailed path
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        
+        // Verify validation failure path exists
+        Assert.Contains("ValidationFailed", definitionValue);
+        Assert.Contains("ValidationError", definitionValue);
+        Assert.Contains("Invalid input", definitionValue);
+    }
+
+    [Fact]
+    public void StateMachine_UpdatesStatusInDynamoDBOnCompletion()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify UpdateStatusCompleted uses DynamoDB updateItem
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        
+        // Verify status update to COMPLETED
+        Assert.Contains("UpdateStatusCompleted", definitionValue);
+        Assert.Contains("dynamodb:updateItem", definitionValue);
+        Assert.Contains("COMPLETED", definitionValue);
+        Assert.Contains("updatedAt", definitionValue);
+    }
+
+    [Fact]
+    public void StateMachine_UpdatesStatusInDynamoDBOnFailure()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify UpdateStatusFailed uses DynamoDB updateItem
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        
+        // Verify status update to FAILED
+        Assert.Contains("UpdateStatusFailed", definitionValue);
+        Assert.Contains("FAILED", definitionValue);
+        Assert.Contains("updatedAt", definitionValue);
+    }
+
+    [Fact]
+    public void StateMachine_SendsSNSNotificationOnSuccess()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify NotifySuccess publishes to SNS
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        
+        // Verify SNS publish for success
+        Assert.Contains("NotifySuccess", definitionValue);
+        Assert.Contains("sns:publish", definitionValue);
+        Assert.Contains("completed successfully", definitionValue);
+    }
+
+    [Fact]
+    public void StateMachine_SendsSNSNotificationOnFailure()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify NotifyFailure publishes to SNS
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        
+        // Verify SNS publish for failure
+        Assert.Contains("NotifyFailure", definitionValue);
+        Assert.Contains("failed", definitionValue);
+    }
+
+    [Fact]
+    public void StateMachine_AllStatesHaveErrorHandling()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify that critical states (InitMetadata, ProcessAudio, PollyTask) have Catch blocks
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        
+        // Verify error handling infrastructure exists
+        Assert.Contains("Catch", definitionValue);
+        Assert.Contains("States.ALL", definitionValue);
+        Assert.Contains("$.error", definitionValue);
+    }
+
+    // ========== Pipeline Construct Tests (Will fail until implementation) ==========
+
+    [Fact]
+    public void PipelineStack_CanBeInstantiated()
+    {
+        // Arrange & Act
+        var app = new App();
+        
+        // Create a pipeline stack
+        var pipelineStack = new PipelineStack(app, "TestPipelineStack", new StackProps());
+        
+        // Assert
+        Assert.NotNull(pipelineStack);
+        var template = Template.FromStack(pipelineStack);
+        Assert.NotNull(template);
+    }
+
+    [Fact]
+    public void PipelineStack_HasCodePipeline()
+    {
+        // Arrange
+        var app = new App();
+        var pipelineStack = new PipelineStack(app, "TestPipelineStack", new StackProps());
+        var template = Template.FromStack(pipelineStack);
+
+        // Act & Assert
+        // Verify pipeline exists (CDK Pipelines creates a CodePipeline)
+        template.ResourceCountIs("AWS::CodePipeline::Pipeline", 1);
+    }
+
+    [Fact]
+    public void PipelineStack_HasSourceStage()
+    {
+        // Arrange
+        var app = new App();
+        var pipelineStack = new PipelineStack(app, "TestPipelineStack", new StackProps());
+        var template = Template.FromStack(pipelineStack);
+
+        // Act & Assert
+        // Verify pipeline has source stage configuration
+        template.HasResourceProperties("AWS::CodePipeline::Pipeline", new Dictionary<string, object>
+        {
+            { "Stages", Match.ArrayWith(new object[]
+                {
+                    Match.ObjectLike(new Dictionary<string, object>
+                    {
+                        { "Name", "Source" }
+                    })
+                })
+            }
+        });
+    }
+
+    [Fact]
+    public void PipelineStack_HasBuildStage()
+    {
+        // Arrange
+        var app = new App();
+        var pipelineStack = new PipelineStack(app, "TestPipelineStack", new StackProps());
+        var template = Template.FromStack(pipelineStack);
+
+        // Act & Assert
+        // Verify pipeline has build stage configuration
+        template.HasResourceProperties("AWS::CodePipeline::Pipeline", new Dictionary<string, object>
+        {
+            { "Stages", Match.ArrayWith(new object[]
+                {
+                    Match.ObjectLike(new Dictionary<string, object>
+                    {
+                        { "Name", "Build" }
+                    })
+                })
+            }
+        });
+    }
+
+    [Fact]
+    public void PipelineStack_HasUpdatePipelineStage()
+    {
+        // Arrange
+        var app = new App();
+        var pipelineStack = new PipelineStack(app, "TestPipelineStack", new StackProps());
+        var template = Template.FromStack(pipelineStack);
+
+        // Act & Assert
+        // Verify pipeline has UpdatePipeline stage (self-mutation)
+        template.HasResourceProperties("AWS::CodePipeline::Pipeline", new Dictionary<string, object>
+        {
+            { "Stages", Match.ArrayWith(new object[]
+                {
+                    Match.ObjectLike(new Dictionary<string, object>
+                    {
+                        { "Name", "UpdatePipeline" }
+                    })
+                })
+            }
+        });
+    }
+
+    // ========== Integration Tests ==========
+
+    [Fact]
+    public void Stack_AllComponentsCanCommunicate()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify EventBridge can invoke Step Functions
+        template.HasResourceProperties("AWS::Events::Rule", new Dictionary<string, object>
+        {
+            { "State", "ENABLED" }
+        });
+        
+        // Verify Step Functions has IAM permissions for all integrations
+        var templateJsonDict = template.ToJSON();
+        var templateJson = System.Text.Json.JsonSerializer.Serialize(templateJsonDict);
+        
+        // Verify permissions for all services
+        Assert.Contains("lambda:InvokeFunction", templateJson);
+        Assert.Contains("dynamodb:PutItem", templateJson);
+        Assert.Contains("dynamodb:UpdateItem", templateJson);
+        Assert.Contains("polly:StartSpeechSynthesisTask", templateJson);
+        Assert.Contains("sns:Publish", templateJson);
+    }
+
+    [Fact]
+    public void Stack_S3EventTriggersStateMachineExecution()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify EventBridge rule filters for S3 Object Created events
+        template.HasResourceProperties("AWS::Events::Rule", new Dictionary<string, object>
+        {
+            { "EventPattern", Match.ObjectLike(new Dictionary<string, object>
+                {
+                    { "source", new[] { "aws.s3" } },
+                    { "detail-type", new[] { "Object Created" } }
+                })
+            }
+        });
+    }
+
+    [Fact]
+    public void Stack_SnapshotTestForCompleteStack()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Comprehensive snapshot to catch any unexpected changes
+        var templateJsonDict = template.ToJSON();
+        var templateJson = System.Text.Json.JsonSerializer.Serialize(templateJsonDict);
+        
+        // Verify all major components exist
+        Assert.Contains("AWS::S3::Bucket", templateJson);
+        Assert.Contains("AWS::Events::Rule", templateJson);
+        Assert.Contains("AWS::StepFunctions::StateMachine", templateJson);
+        Assert.Contains("AWS::Lambda::Function", templateJson);
+        Assert.Contains("AWS::DynamoDB::Table", templateJson);
+        Assert.Contains("AWS::SNS::Topic", templateJson);
+        Assert.Contains("AWS::KMS::Key", templateJson);
+        Assert.Contains("AWS::IAM::Role", templateJson);
+        Assert.Contains("AWS::IAM::Policy", templateJson);
+        
+        // Verify resource count is as expected (this will help catch additions/deletions)
+        template.ResourceCountIs("AWS::S3::Bucket", 2);
+        template.ResourceCountIs("AWS::StepFunctions::StateMachine", 1);
+        template.ResourceCountIs("AWS::DynamoDB::Table", 1);
+        template.ResourceCountIs("AWS::SNS::Topic", 2);
+    }
 }

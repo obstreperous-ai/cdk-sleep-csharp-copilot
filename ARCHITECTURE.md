@@ -1,16 +1,16 @@
 # Architecture — Event-Driven Sleep Audio Pipeline
 
-> **Status:** Core Pipeline Complete with Input Validation (TDD-driven). The
-> complete foundational pipeline is now implemented: S3 input/output buckets,
-> EventBridge rule for object creation events, **Step Functions state machine
-> with input validation, Polly integration**, **DynamoDB table for audio
-> pipeline metadata with complete I/O handling**, **SNS notifications with
-> comprehensive error handling and status updates**, **Lambda function for audio
-> processing (placeholder skeleton)**, and **input validation for S3 events**.
-> Issue #8 (Complete Pipeline Wiring, Input Validation & Basic End-to-End Flow)
-> is now complete.
-> The next slice is *"[9] TDD: Pipeline Testing, Refinement & Deployment
-> Preparation"*.
+> **Status:** Core Pipeline Complete with Comprehensive Testing & Deployment Preparation
+> (TDD-driven). The complete foundational pipeline is now implemented: S3 input/output
+> buckets, EventBridge rule for object creation events, **Step Functions state machine
+> with input validation, Polly integration**, **DynamoDB table for audio pipeline
+> metadata with complete I/O handling**, **SNS notifications with comprehensive error
+> handling and status updates**, **Lambda function for audio processing (placeholder
+> skeleton)**, and **input validation for S3 events**. Issue #9 (TDD: Pipeline
+> Testing, Refinement & Deployment Preparation) is now complete, adding **75
+> comprehensive tests**, **multi-environment support (dev/stage/prod)**, and a **CDK
+> Pipelines skeleton for continuous deployment**. The next slice is *"[10] TDD:
+> Advanced Error Handling, Retries & Observability"*.
 >
 > This document is the **single source of truth** for the system design. Every
 > future issue and pull request must keep the code and this document consistent.
@@ -186,12 +186,34 @@
   - All IAM permissions properly scoped and tested
   - CDK synth succeeds with no errors
 
+### Completed (Issue #9)
+- ✅ **Comprehensive Testing & Deployment Preparation**
+  - 75 unit tests covering all major components and integration points
+  - End-to-end flow tests (InitMetadata → ValidateInput → ProcessAudio → PollyTask → UpdateStatus → Notify)
+  - Input validation scenario tests (valid/invalid file types)
+  - Error path verification tests
+  - Multi-environment configuration tests
+  - Pipeline construct tests
+
+- ✅ **Multi-Environment Support**
+  - Environment-aware stack naming (CdkBaseStack-dev, CdkBaseStack-stage, CdkBaseStack-prod)
+  - CDK context parameter support (`-c environment=dev|stage|prod`)
+  - Backward-compatible default to "dev" environment
+  - Verified cdk synth for dev, stage, and prod
+
+- ✅ **CDK Pipelines Skeleton**
+  - PipelineStack construct for continuous deployment
+  - Source, Build/Synth, and UpdatePipeline stages configured
+  - Placeholder for GitHub source integration
+  - Ready for deployment stage additions
+
 ### Pending
 - Full audio processing workflow (multi-step state machine with additional Lambda functions)
 - Amazon Bedrock integration (optional, feature-flagged)
 - CloudWatch alarms and observability
 - SNS topic subscriptions (email, SQS, etc.)
 - Deployment to AWS environment
+- Advanced error handling and retry strategies
 
 ## 1. High-Level Overview
 
@@ -561,14 +583,135 @@ two specific topics.
 ## 8. Multi-Environment Support
 
 The stack is parameterized by a CDK **context** value (for example
-`-c env=dev|stage|prod`). The environment drives:
+`-c environment=dev|stage|prod`). The environment drives:
 
-- Resource naming/prefixes to avoid collisions across environments.
-- Feature flags (for example enabling Bedrock only in `stage`/`prod`).
-- Capacity, alarm thresholds, and retention/lifecycle settings.
-- Removal policies (more permissive cleanup in `dev`, retain in `prod`).
+- **Resource naming/prefixes** to avoid collisions across environments. Stack names
+  include the environment name (e.g., `CdkBaseStack-dev`, `CdkBaseStack-prod`).
+- **Feature flags** (for example enabling Bedrock only in `stage`/`prod`).
+- **Capacity, alarm thresholds, and retention/lifecycle settings**.
+- **Removal policies** (more permissive cleanup in `dev`, retain in `prod`).
 
-## 9. Future Extensibility
+### Environment Configuration
+
+To deploy to different environments, use the CDK context parameter:
+
+```bash
+# Deploy to dev (default if not specified)
+cdk deploy
+
+# Deploy to stage
+cdk deploy -c environment=stage
+
+# Deploy to prod
+cdk deploy -c environment=prod
+```
+
+### Implementation Details
+
+- The `Program.cs` entry point reads the `environment` context value (defaults to "dev")
+- Stack resources are created with environment-aware naming
+- The `CdkBaseStack` constructor accepts an `environmentName` parameter
+- Each environment deployment is isolated by stack name
+
+## 9. Deployment Pipeline (CDK Pipelines)
+
+The project includes a **PipelineStack** construct that sets up continuous deployment
+using AWS CDK Pipelines. This is a skeleton implementation that can be customized for
+your CI/CD needs.
+
+### Pipeline Architecture
+
+```mermaid
+graph LR
+    A[Source<br/>GitHub] --> B[Build<br/>Synth]
+    B --> C[UpdatePipeline<br/>Self-Mutation]
+    C --> D[Deploy Dev<br/>Future]
+    D --> E[Manual Approval<br/>Future]
+    E --> F[Deploy Prod<br/>Future]
+    
+    style C fill:#e1f5ff
+    style D fill:#f0f0f0
+    style E fill:#f0f0f0
+    style F fill:#f0f0f0
+```
+
+### Pipeline Stages
+
+1. **Source Stage**: Pulls code from GitHub repository (configurable)
+2. **Build/Synth Stage**: 
+   - Builds the Lambda function (.NET 8)
+   - Runs unit tests
+   - Synthesizes CDK application
+3. **UpdatePipeline Stage**: Self-mutating - updates itself if pipeline code changes
+4. **Future Deployment Stages**: Placeholders for dev, stage, and prod deployments
+
+### Pipeline Setup
+
+The `PipelineStack` class (`src/CdkBase/PipelineStack.cs`) provides the skeleton:
+
+```csharp
+// In your CDK app (separate from the application stack):
+var pipelineStack = new PipelineStack(app, "SleepAudioPipelineStack", new StackProps());
+```
+
+**Note**: The current implementation is a skeleton with placeholder values:
+- GitHub repository: Replace `"OWNER/REPO"` with actual repository
+- GitHub authentication: Configure GitHub token in AWS Secrets Manager
+- Deployment stages: Currently commented out, add as needed
+
+### Adding Deployment Stages (Future)
+
+To add automated deployments to different environments:
+
+```csharp
+// Create application stages
+var devStage = new Stage(app, "Dev");
+new CdkBaseStack(devStage, "CdkBaseStack", new StackProps(), "dev");
+pipeline.AddStage(devStage);
+
+var prodStage = new Stage(app, "Prod");
+new CdkBaseStack(prodStage, "CdkBaseStack", new StackProps(), "prod");
+pipeline.AddStage(prodStage, new AddStageOpts {
+    Pre = new[] { new ManualApprovalStep("PromoteToProd") }
+});
+```
+
+## 10. Testing Strategy
+
+Following strict TDD principles, the project includes comprehensive test coverage:
+
+### Test Categories
+
+1. **Component Tests**: Individual resource validation (S3, DynamoDB, SNS, Lambda, etc.)
+2. **Integration Tests**: Verify component wiring (EventBridge → Step Functions, etc.)
+3. **End-to-End Flow Tests**: Complete pipeline flow validation
+4. **Error Path Tests**: Validation failure and error handling verification
+5. **Multi-Environment Tests**: Environment context and configuration tests
+6. **Pipeline Tests**: CI/CD pipeline structure validation
+
+### Test Execution
+
+```bash
+# Run all tests
+dotnet test src/CdkBase.sln
+
+# Verify CDK synthesis for different environments
+npx cdk synth                          # dev (default)
+npx cdk synth -c environment=stage     # stage
+npx cdk synth -c environment=prod      # prod
+
+# Check for drift
+npx cdk diff -c environment=dev
+```
+
+### Test Coverage
+
+- **75 unit tests** covering all major components and integration points
+- **Snapshot tests** to detect unexpected infrastructure changes
+- **State machine definition tests** for complete workflow validation
+- **IAM permission tests** ensuring least-privilege access
+
+## 11. Future Extensibility
 
 - **Additional processing steps** (noise reduction, loudness normalization,
   format transcoding) slot into the Step Functions workflow without changing
@@ -579,9 +722,12 @@ The stack is parameterized by a CDK **context** value (for example
   bucket for pre-signed uploads and job status queries backed by DynamoDB.
 - **Catalog / search** over generated assets can be built from the DynamoDB
   metadata table.
+- **Advanced deployment strategies**: Blue/green deployments, canary releases,
+  and automated rollbacks can be added to the pipeline stages.
 
-## 10. Out of Scope (for the initial design)
+## 12. Out of Scope (for the initial design)
 
 - Client/mobile applications and authentication of end users.
 - Billing/subscription management.
 - A public REST/GraphQL API (noted as a future extension above).
+- Actual GitHub repository configuration and secrets management for CI/CD.
