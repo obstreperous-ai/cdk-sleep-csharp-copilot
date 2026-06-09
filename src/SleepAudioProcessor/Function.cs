@@ -35,7 +35,7 @@ public class Function
     /// <summary>
     /// Helper method to log structured JSON messages
     /// </summary>
-    private void LogStructured(ILambdaContext context, string level, string message, object? data = null)
+    private static void LogStructured(ILambdaContext context, string level, string message, object? data = null)
     {
         var logEntry = new Dictionary<string, object>
         {
