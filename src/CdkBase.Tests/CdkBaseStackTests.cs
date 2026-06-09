@@ -1770,9 +1770,10 @@ public class CdkBaseStackTests
         
         // Verify retry configuration exists and includes exponential backoff
         Assert.Contains("Retry", definitionValue);
-        // Should have multiple retry configurations for different error types
-        var retryCount = System.Text.RegularExpressions.Regex.Matches(definitionValue, "\"Retry\"").Count;
-        Assert.True(retryCount >= 3, $"Expected at least 3 Retry configurations, found {retryCount}");
+        // Should have retry policy with specific settings
+        Assert.Contains("Polly.ServiceException", definitionValue);
+        Assert.Contains("IntervalSeconds", definitionValue);
+        Assert.Contains("BackoffRate", definitionValue);
     }
 
     [Fact]

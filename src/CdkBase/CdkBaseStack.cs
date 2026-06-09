@@ -10,6 +10,7 @@ using Amazon.CDK.AWS.DynamoDB;
 using Amazon.CDK.AWS.SNS;
 using Amazon.CDK.AWS.KMS;
 using Amazon.CDK.AWS.Lambda;
+using Amazon.CDK.AWS.CloudWatch;
 using Constructs;
 
 namespace CdkBase
@@ -147,7 +148,8 @@ namespace CdkBase
                 },
                 Timeout = Duration.Seconds(30),
                 MemorySize = 512,
-                Description = "Processes audio metadata and performs placeholder audio processing operations"
+                Description = "Processes audio metadata and performs placeholder audio processing operations",
+                Tracing = Tracing.ACTIVE
             });
 
             // Grant Lambda permissions to update DynamoDB table
@@ -208,8 +210,32 @@ namespace CdkBase
                                 },
                                 { "ResultPath", "$.metadata" },
                                 { "Next", "ValidateInput" },
+                                { "Retry", new object[]
+                                    {
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "ErrorEquals", new[] { "DynamoDB.ProvisionedThroughputExceededException" } },
+                                            { "IntervalSeconds", 2 },
+                                            { "MaxAttempts", 3 },
+                                            { "BackoffRate", 2.0 }
+                                        },
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "ErrorEquals", new[] { "States.TaskFailed" } },
+                                            { "IntervalSeconds", 1 },
+                                            { "MaxAttempts", 2 },
+                                            { "BackoffRate", 2.0 }
+                                        }
+                                    }
+                                },
                                 { "Catch", new object[]
                                     {
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "ErrorEquals", new[] { "DynamoDB.ProvisionedThroughputExceededException" } },
+                                            { "ResultPath", "$.error" },
+                                            { "Next", "UpdateStatusFailed" }
+                                        },
                                         new System.Collections.Generic.Dictionary<string, object>
                                         {
                                             { "ErrorEquals", new[] { "States.ALL" } },
@@ -322,8 +348,38 @@ namespace CdkBase
                                 },
                                 { "ResultPath", "$.processorResult" },
                                 { "Next", "PollyTask" },
+                                { "Retry", new object[]
+                                    {
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "ErrorEquals", new[] { "Lambda.ServiceException", "Lambda.TooManyRequestsException" } },
+                                            { "IntervalSeconds", 2 },
+                                            { "MaxAttempts", 3 },
+                                            { "BackoffRate", 2.0 }
+                                        },
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "ErrorEquals", new[] { "States.TaskFailed" } },
+                                            { "IntervalSeconds", 1 },
+                                            { "MaxAttempts", 2 },
+                                            { "BackoffRate", 2.0 }
+                                        }
+                                    }
+                                },
                                 { "Catch", new object[]
                                     {
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "ErrorEquals", new[] { "Lambda.ServiceException" } },
+                                            { "ResultPath", "$.error" },
+                                            { "Next", "UpdateStatusFailed" }
+                                        },
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "ErrorEquals", new[] { "States.TaskFailed" } },
+                                            { "ResultPath", "$.error" },
+                                            { "Next", "UpdateStatusFailed" }
+                                        },
                                         new System.Collections.Generic.Dictionary<string, object>
                                         {
                                             { "ErrorEquals", new[] { "States.ALL" } },
@@ -348,8 +404,38 @@ namespace CdkBase
                                 },
                                 { "ResultPath", "$.pollyResult" },
                                 { "Next", "UpdateStatusCompleted" },
+                                { "Retry", new object[]
+                                    {
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "ErrorEquals", new[] { "Polly.ServiceException", "Polly.ThrottlingException" } },
+                                            { "IntervalSeconds", 3 },
+                                            { "MaxAttempts", 3 },
+                                            { "BackoffRate", 2.0 }
+                                        },
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "ErrorEquals", new[] { "States.TaskFailed" } },
+                                            { "IntervalSeconds", 2 },
+                                            { "MaxAttempts", 2 },
+                                            { "BackoffRate", 2.0 }
+                                        }
+                                    }
+                                },
                                 { "Catch", new object[]
                                     {
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "ErrorEquals", new[] { "Polly.ServiceException" } },
+                                            { "ResultPath", "$.error" },
+                                            { "Next", "UpdateStatusFailed" }
+                                        },
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "ErrorEquals", new[] { "States.TaskFailed" } },
+                                            { "ResultPath", "$.error" },
+                                            { "Next", "UpdateStatusFailed" }
+                                        },
                                         new System.Collections.Generic.Dictionary<string, object>
                                         {
                                             { "ErrorEquals", new[] { "States.ALL" } },
@@ -400,7 +486,18 @@ namespace CdkBase
                                     }
                                 },
                                 { "ResultPath", "$.updateResult" },
-                                { "Next", "NotifySuccess" }
+                                { "Next", "NotifySuccess" },
+                                { "Retry", new object[]
+                                    {
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "ErrorEquals", new[] { "DynamoDB.ProvisionedThroughputExceededException" } },
+                                            { "IntervalSeconds", 2 },
+                                            { "MaxAttempts", 3 },
+                                            { "BackoffRate", 2.0 }
+                                        }
+                                    }
+                                }
                             }
                         },
                         { "UpdateStatusFailed", new System.Collections.Generic.Dictionary<string, object>
@@ -443,7 +540,18 @@ namespace CdkBase
                                     }
                                 },
                                 { "ResultPath", "$.updateResult" },
-                                { "Next", "NotifyFailure" }
+                                { "Next", "NotifyFailure" },
+                                { "Retry", new object[]
+                                    {
+                                        new System.Collections.Generic.Dictionary<string, object>
+                                        {
+                                            { "ErrorEquals", new[] { "DynamoDB.ProvisionedThroughputExceededException" } },
+                                            { "IntervalSeconds", 2 },
+                                            { "MaxAttempts", 3 },
+                                            { "BackoffRate", 2.0 }
+                                        }
+                                    }
+                                }
                             }
                         },
                         { "NotifySuccess", new System.Collections.Generic.Dictionary<string, object>
@@ -467,7 +575,7 @@ namespace CdkBase
                                 { "Parameters", new System.Collections.Generic.Dictionary<string, object>
                                     {
                                         { "TopicArn", FailedTopic.TopicArn },
-                                        { "Message.$", "States.Format('Sleep audio pipeline failed for audioId: {}', $.metadata.Item.audioId.S)" },
+                                        { "Message.$", "States.Format('Sleep audio pipeline failed for audioId: {}. Error: {}', $.metadata.Item.audioId.S, States.JsonToString($.error))" },
                                         { "Subject", "Sleep Audio Pipeline - Failed" }
                                     }
                                 },
@@ -545,12 +653,28 @@ namespace CdkBase
                 Resources = new[] { "*" }
             }));
 
+            // Grant X-Ray permissions for State Machine
+            stateMachineRole.AddToPolicy(new PolicyStatement(new PolicyStatementProps
+            {
+                Effect = Effect.ALLOW,
+                Actions = new[]
+                {
+                    "xray:PutTraceSegments",
+                    "xray:PutTelemetryRecords"
+                },
+                Resources = new[] { "*" }
+            }));
+
             // Create the State Machine using CfnStateMachine for full control
             var cfnStateMachine = new Amazon.CDK.AWS.StepFunctions.CfnStateMachine(this, "SleepAudioPipelineStateMachine", new Amazon.CDK.AWS.StepFunctions.CfnStateMachineProps
             {
                 RoleArn = stateMachineRole.RoleArn,
                 DefinitionString = definitionJson,
                 StateMachineName = "SleepAudioPipelineStateMachine",
+                TracingConfiguration = new Amazon.CDK.AWS.StepFunctions.CfnStateMachine.TracingConfigurationProperty
+                {
+                    Enabled = true
+                },
                 LoggingConfiguration = new Amazon.CDK.AWS.StepFunctions.CfnStateMachine.LoggingConfigurationProperty
                 {
                     Level = "ALL",
@@ -580,6 +704,54 @@ namespace CdkBase
             {
                 Input = Amazon.CDK.AWS.Events.RuleTargetInput.FromEventPath("$")
             }));
+
+            // CloudWatch Alarms for Observability
+
+            // Alarm for State Machine Execution Failures
+            var stateMachineFailureAlarm = new Alarm(this, "SleepAudioPipelineStateMachineFailureAlarm", new AlarmProps
+            {
+                Metric = new Metric(new MetricProps
+                {
+                    Namespace = "AWS/States",
+                    MetricName = "ExecutionsFailed",
+                    DimensionsMap = new System.Collections.Generic.Dictionary<string, string>
+                    {
+                        { "StateMachineArn", cfnStateMachine.AttrArn }
+                    },
+                    Statistic = "Sum",
+                    Period = Duration.Minutes(5)
+                }),
+                Threshold = 1,
+                EvaluationPeriods = 1,
+                ComparisonOperator = ComparisonOperator.GREATER_THAN_THRESHOLD,
+                AlarmDescription = "Alert when Step Functions state machine executions fail",
+                TreatMissingData = TreatMissingData.NOT_BREACHING
+            });
+
+            // Alarm for Lambda Function Errors
+            var lambdaErrorAlarm = new Alarm(this, "SleepAudioProcessorLambdaErrorAlarm", new AlarmProps
+            {
+                Metric = new Metric(new MetricProps
+                {
+                    Namespace = "AWS/Lambda",
+                    MetricName = "Errors",
+                    DimensionsMap = new System.Collections.Generic.Dictionary<string, string>
+                    {
+                        { "FunctionName", AudioProcessorFunction.FunctionName }
+                    },
+                    Statistic = "Sum",
+                    Period = Duration.Minutes(5)
+                }),
+                Threshold = 1,
+                EvaluationPeriods = 1,
+                ComparisonOperator = ComparisonOperator.GREATER_THAN_THRESHOLD,
+                AlarmDescription = "Alert when Lambda function errors occur",
+                TreatMissingData = TreatMissingData.NOT_BREACHING
+            });
+
+            // Optional: Add alarm actions to publish to SNS topic
+            stateMachineFailureAlarm.AddAlarmAction(new Amazon.CDK.AWS.CloudWatch.Actions.SnsAction(FailedTopic));
+            lambdaErrorAlarm.AddAlarmAction(new Amazon.CDK.AWS.CloudWatch.Actions.SnsAction(FailedTopic));
         }
     }
 }
