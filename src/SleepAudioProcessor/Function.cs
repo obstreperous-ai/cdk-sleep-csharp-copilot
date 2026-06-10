@@ -167,16 +167,20 @@ public class Function
                           "Let all tension melt away as you drift into peaceful, restful sleep. " +
                           "Feel your body becoming heavier with each breath. You are safe, comfortable, and deeply relaxed.";
             
-            using var audioStream = await GenerateSleepAudioAsync(sleepText, context);
-            LogStructured(context, "INFO", "Sleep audio generated with Polly", new { audioId, textLength = sleepText.Length });
+            // Generate and upload audio in one scope to ensure proper stream disposal
+            long outputFileSize;
+            using (var audioStream = await GenerateSleepAudioAsync(sleepText, context))
+            {
+                LogStructured(context, "INFO", "Sleep audio generated with Polly", new { audioId, textLength = sleepText.Length });
 
-            // Step 3: Upload processed audio to Output S3 bucket
-            var outputFileSize = await UploadToS3Async(outputKey, audioStream, context);
-            LogStructured(context, "INFO", "Processed audio uploaded to output bucket", 
-                new { audioId, outputBucket = _outputBucketName, outputKey, outputFileSize });
+                // Step 3: Upload processed audio to Output S3 bucket
+                outputFileSize = await UploadToS3Async(outputKey, audioStream, context);
+                LogStructured(context, "INFO", "Processed audio uploaded to output bucket", 
+                    new { audioId, outputBucket = _outputBucketName, outputKey, outputFileSize });
 
-            // Step 4: Update DynamoDB with output location and metadata
-            await UpdateMetadataWithOutputAsync(audioId, outputKey, outputFileSize, context);
+                // Step 4: Update DynamoDB with output location and metadata
+                await UpdateMetadataWithOutputAsync(audioId, outputKey, outputFileSize, context);
+            }
 
             // Return success response with output metadata
             var response = new Dictionary<string, object>
@@ -256,8 +260,12 @@ public class Function
             var response = await _pollyClient.SynthesizeSpeechAsync(request);
             
             // Copy the stream to a MemoryStream so we can reuse it
+            // Dispose the original Polly stream after copying
             var memoryStream = new MemoryStream();
-            await response.AudioStream.CopyToAsync(memoryStream);
+            using (response.AudioStream)
+            {
+                await response.AudioStream.CopyToAsync(memoryStream);
+            }
             memoryStream.Position = 0;
             
             return memoryStream;

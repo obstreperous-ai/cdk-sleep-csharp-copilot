@@ -2074,7 +2074,7 @@ public class CdkBaseStackTests
         // Verify Lambda has adequate memory for audio processing (at least 512 MB)
         template.HasResourceProperties("AWS::Lambda::Function", Match.ObjectLike(new Dictionary<string, object>
         {
-            { "MemorySize", Match.AnyValue() } // Will verify it's >= 512 in implementation
+            { "MemorySize", 512 } // Verify actual value is 512 MB
         }));
     }
 
@@ -2091,7 +2091,7 @@ public class CdkBaseStackTests
         // Current timeout is 30 seconds, which should be sufficient for most audio processing
         template.HasResourceProperties("AWS::Lambda::Function", Match.ObjectLike(new Dictionary<string, object>
         {
-            { "Timeout", Match.AnyValue() }
+            { "Timeout", 30 } // Verify actual timeout is 30 seconds
         }));
     }
 }
