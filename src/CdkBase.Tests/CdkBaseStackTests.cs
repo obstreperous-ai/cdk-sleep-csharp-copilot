@@ -1722,4 +1722,240 @@ public class CdkBaseStackTests
         template.ResourceCountIs("AWS::DynamoDB::Table", 1);
         template.ResourceCountIs("AWS::SNS::Topic", 2);
     }
+
+    // ========== Issue #10: Advanced Error Handling, Retries & Observability Tests ==========
+
+    [Fact]
+    public void StateMachine_LambdaTaskHasRetryPolicy()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify the ProcessAudio Lambda task has retry configuration
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        
+        // Verify retry configuration exists for Lambda task
+        Assert.Contains("Retry", definitionValue);
+        Assert.Contains("IntervalSeconds", definitionValue);
+        Assert.Contains("MaxAttempts", definitionValue);
+        Assert.Contains("BackoffRate", definitionValue);
+    }
+
+    [Fact]
+    public void StateMachine_PollyTaskHasRetryPolicy()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify the Polly task has retry configuration
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        
+        // Verify retry configuration exists and includes exponential backoff
+        Assert.Contains("Retry", definitionValue);
+        // Should have retry policy with specific settings
+        Assert.Contains("Polly.ServiceException", definitionValue);
+        Assert.Contains("IntervalSeconds", definitionValue);
+        Assert.Contains("BackoffRate", definitionValue);
+    }
+
+    [Fact]
+    public void StateMachine_DynamoDBTasksHaveRetryPolicy()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify DynamoDB tasks have retry configuration
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        
+        // Verify retry configuration exists for DynamoDB operations
+        Assert.Contains("Retry", definitionValue);
+        Assert.Contains("BackoffRate", definitionValue);
+    }
+
+    [Fact]
+    public void StateMachine_CatchBlocksHandleSpecificErrorTypes()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify specific error types are caught
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        
+        // Verify specific error types are handled
+        Assert.Contains("Lambda.ServiceException", definitionValue);
+        Assert.Contains("States.TaskFailed", definitionValue);
+        Assert.Contains("DynamoDB.ProvisionedThroughputExceededException", definitionValue);
+    }
+
+    [Fact]
+    public void LambdaFunction_HasXRayTracingEnabled()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify Lambda has X-Ray tracing enabled
+        template.HasResourceProperties("AWS::Lambda::Function", new Dictionary<string, object>
+        {
+            { "TracingConfig", new Dictionary<string, object>
+                {
+                    { "Mode", "Active" }
+                }
+            }
+        });
+    }
+
+    [Fact]
+    public void StateMachine_HasXRayTracingEnabled()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify State Machine has X-Ray tracing enabled
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "TracingConfiguration", new Dictionary<string, object>
+                {
+                    { "Enabled", true }
+                }
+            }
+        });
+    }
+
+    [Fact]
+    public void Stack_HasCloudWatchAlarmForStateMachineFailures()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify CloudWatch Alarm exists for state machine failures
+        template.HasResourceProperties("AWS::CloudWatch::Alarm", new Dictionary<string, object>
+        {
+            { "MetricName", "ExecutionsFailed" },
+            { "Namespace", "AWS/States" },
+            { "Statistic", "Sum" },
+            { "ComparisonOperator", "GreaterThanThreshold" }
+        });
+    }
+
+    [Fact]
+    public void Stack_HasCloudWatchAlarmForLambdaErrors()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify CloudWatch Alarm exists for Lambda errors
+        template.HasResourceProperties("AWS::CloudWatch::Alarm", new Dictionary<string, object>
+        {
+            { "MetricName", "Errors" },
+            { "Namespace", "AWS/Lambda" },
+            { "Statistic", "Sum" },
+            { "ComparisonOperator", "GreaterThanThreshold" }
+        });
+    }
+
+    [Fact]
+    public void StateMachine_NotifyFailureIncludesErrorContext()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify NotifyFailure includes error context in the message
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        
+        // Verify error context is included in failure notifications
+        Assert.Contains("$.error", definitionValue);
+        // Should have error information in the notification message
+        var notifyFailureSection = definitionValue.Substring(
+            definitionValue.IndexOf("NotifyFailure"));
+        Assert.Contains("$.error", notifyFailureSection);
+    }
+
+    [Fact]
+    public void LambdaExecutionRole_HasXRayWritePermissions()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // Verify Lambda execution role has X-Ray permissions
+        template.HasResourceProperties("AWS::IAM::Policy", Match.ObjectLike(new Dictionary<string, object>
+        {
+            { "PolicyDocument", Match.ObjectLike(new Dictionary<string, object>
+                {
+                    { "Statement", Match.ArrayWith(new object[]
+                        {
+                            Match.ObjectLike(new Dictionary<string, object>
+                            {
+                                { "Action", Match.ArrayWith(new object[]
+                                    {
+                                        "xray:PutTraceSegments",
+                                        "xray:PutTelemetryRecords"
+                                    })
+                                }
+                            })
+                        })
+                    }
+                })
+            }
+        }));
+    }
 }
