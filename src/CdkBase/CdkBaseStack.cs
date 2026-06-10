@@ -164,6 +164,8 @@ namespace CdkBase
             OutputBucket.GrantWrite(AudioProcessorFunction);
 
             // Grant Lambda permissions to use Amazon Polly for speech synthesis
+            // Note: Polly's SynthesizeSpeech action does not support resource-level permissions,
+            // so we must use a wildcard resource. This is an AWS service limitation.
             AudioProcessorFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
             {
                 Effect = Effect.ALLOW,

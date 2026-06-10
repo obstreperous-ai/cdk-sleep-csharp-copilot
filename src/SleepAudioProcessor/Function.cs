@@ -14,6 +14,9 @@ namespace SleepAudioProcessor;
 
 public class Function
 {
+    // Output path template for processed audio files
+    private const string OutputKeyTemplate = "processed/{0}/{1}-sleep-audio.mp3";
+    
     private readonly IAmazonDynamoDB _dynamoDbClient;
     private readonly IAmazonS3 _s3Client;
     private readonly IAmazonPolly _pollyClient;
@@ -157,12 +160,14 @@ public class Function
             LogStructured(context, "INFO", "Input file metadata retrieved", new { audioId, inputBucket, inputKey, inputFileSize });
 
             // Step 2: Generate sleep audio using Polly
-            var outputKey = $"processed/{audioId}/{Path.GetFileNameWithoutExtension(inputKey)}-sleep-audio.mp3";
+            var outputKey = string.Format(OutputKeyTemplate, audioId, Path.GetFileNameWithoutExtension(inputKey));
+            
+            // TODO: Future enhancement - extract sleep text to configuration or DynamoDB for personalization
             var sleepText = "Welcome to your sleep relaxation session. Close your eyes and take a deep breath. " +
                           "Let all tension melt away as you drift into peaceful, restful sleep. " +
                           "Feel your body becoming heavier with each breath. You are safe, comfortable, and deeply relaxed.";
             
-            var audioStream = await GenerateSleepAudioAsync(sleepText, context);
+            using var audioStream = await GenerateSleepAudioAsync(sleepText, context);
             LogStructured(context, "INFO", "Sleep audio generated with Polly", new { audioId, textLength = sleepText.Length });
 
             // Step 3: Upload processed audio to Output S3 bucket
@@ -284,11 +289,12 @@ public class Function
                 }
             };
             
+            // Get the size before uploading (in case upload fails)
+            var fileSize = audioStream.Length;
+            
             var response = await _s3Client.PutObjectAsync(request);
             
-            // Get the size of the uploaded file
-            audioStream.Position = 0;
-            return audioStream.Length;
+            return fileSize;
         }
         catch (Exception ex)
         {
