@@ -144,16 +144,34 @@ namespace CdkBase
                 Code = Code.FromAsset(lambdaPublishPath),
                 Environment = new System.Collections.Generic.Dictionary<string, string>
                 {
-                    { "TABLE_NAME", MetadataTable.TableName }
+                    { "TABLE_NAME", MetadataTable.TableName },
+                    { "INPUT_BUCKET_NAME", InputBucket.BucketName },
+                    { "OUTPUT_BUCKET_NAME", OutputBucket.BucketName }
                 },
                 Timeout = Duration.Seconds(30),
                 MemorySize = 512,
-                Description = "Processes audio metadata and performs placeholder audio processing operations",
+                Description = "Processes audio files from input bucket, generates/enhances sleep audio, and stores results in output bucket",
                 Tracing = Tracing.ACTIVE
             });
 
             // Grant Lambda permissions to update DynamoDB table
             MetadataTable.GrantWriteData(AudioProcessorFunction);
+
+            // Grant Lambda permissions to read from Input S3 bucket
+            InputBucket.GrantRead(AudioProcessorFunction);
+
+            // Grant Lambda permissions to write to Output S3 bucket
+            OutputBucket.GrantWrite(AudioProcessorFunction);
+
+            // Grant Lambda permissions to use Amazon Polly for speech synthesis
+            // Note: Polly's SynthesizeSpeech action does not support resource-level permissions,
+            // so we must use a wildcard resource. This is an AWS service limitation.
+            AudioProcessorFunction.AddToRolePolicy(new PolicyStatement(new PolicyStatementProps
+            {
+                Effect = Effect.ALLOW,
+                Actions = new[] { "polly:SynthesizeSpeech" },
+                Resources = new[] { "*" }
+            }));
 
             // CloudWatch Logs for State Machine
             var stateMachineLogGroup = new Amazon.CDK.AWS.Logs.LogGroup(this, "SleepAudioPipelineStateMachineLogGroup", new Amazon.CDK.AWS.Logs.LogGroupProps

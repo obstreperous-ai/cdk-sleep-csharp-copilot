@@ -1,18 +1,18 @@
 # Architecture — Event-Driven Sleep Audio Pipeline
 
-> **Status:** Core Pipeline Complete with Advanced Error Handling, Retries & Observability
+> **Status:** Core Pipeline Complete with Full Audio Processing Implementation  
 > (TDD-driven). The complete foundational pipeline is now implemented: S3 input/output
 > buckets, EventBridge rule for object creation events, **Step Functions state machine
 > with input validation, Polly integration**, **DynamoDB table for audio pipeline
 > metadata with complete I/O handling**, **SNS notifications with comprehensive error
-> handling and status updates**, **Lambda function for audio processing (placeholder
-> skeleton) with structured JSON logging**, **input validation for S3 events**, and
+> handling and status updates**, **Lambda function for full audio processing with S3,
+> Polly, and DynamoDB integration**, **input validation for S3 events**, and
 > **advanced error handling with retry policies, X-Ray tracing, and CloudWatch Alarms**.
-> Issue #10 (TDD: Advanced Error Handling, Retries & Observability) is now complete,
-> adding **retry policies with exponential backoff**, **specific error type handling**,
-> **X-Ray distributed tracing**, **structured JSON logging**, and **CloudWatch Alarms
-> for failures**. All **85 comprehensive tests** pass. The next slice is *"[11] TDD:
-> Full Audio Processing Implementation & Output Handling"*.
+> Issue #11 (TDD: Full Audio Processing Implementation & Output Handling) is now complete,
+> implementing **real audio processing with Polly speech synthesis**, **S3 input/output
+> handling**, **DynamoDB metadata updates with output location and file sizes**, and
+> **structured success responses**. All **92 comprehensive tests** pass. The next slice
+> is *"[12] TDD: End-to-End Validation, Documentation Polish & Project Completion"*.
 >
 > This document is the **single source of truth** for the system design. Every
 > future issue and pull request must keep the code and this document consistent.
@@ -118,14 +118,21 @@
   - Runtime: .NET 8 (`dotnet8`)
   - Handler: `SleepAudioProcessor::SleepAudioProcessor.Function::FunctionHandler`
   - Memory: 512 MB, Timeout: 30 seconds
-  - Environment variables: `TABLE_NAME` (DynamoDB table name)
-  - Purpose: Placeholder for future audio processing, metadata enrichment, or validation logic
+  - Environment variables: 
+    - `TABLE_NAME` (DynamoDB table name)
+    - `INPUT_BUCKET_NAME` (Input S3 bucket name) - **Added in Issue #11**
+    - `OUTPUT_BUCKET_NAME` (Output S3 bucket name) - **Added in Issue #11**
+  - Purpose: Processes audio files from input bucket, generates/enhances sleep audio, and stores results in output bucket
   - Current functionality:
     - Receives input from state machine (metadata from InitMetadata state)
-    - Logs the input for debugging
-    - Updates DynamoDB record with `processedAt` timestamp
-    - Returns success response with status and audioId
-  - Error handling: Catches exceptions and returns error response
+    - Logs the input for debugging with structured JSON logging
+    - Extracts audioId, inputBucket, and inputKey from metadata
+    - Downloads input file metadata from S3 (file size)
+    - Generates sleep audio using Amazon Polly with neural voice (Joanna)
+    - Uploads processed audio to Output S3 bucket with metadata
+    - Updates DynamoDB record with output location (`outputKey`, `outputBucket`), file sizes, and status (`COMPLETED`)
+    - Returns success response with all metadata including input/output locations and file sizes
+  - Error handling: Catches exceptions and returns error response with structured logging
 
 - ✅ **Lambda Integration in State Machine**
   - ProcessAudio state: Invokes Lambda function using `lambda:invoke` integration
@@ -134,16 +141,20 @@
   - Output: Stored in `$.processorResult`
   - Error handling: Catch block routes errors to UpdateStatusFailed
 
-- ✅ **Lambda IAM Permissions (Least Privilege)**
+- ✅ **Lambda IAM Permissions (Least Privilege)** - **Enhanced in Issue #11**
   - Lambda execution role: Managed by CDK (CloudWatch Logs permissions automatic)
   - DynamoDB access: Lambda granted `UpdateItem` permission on MetadataTable via `grantWriteData`
+  - S3 read access: Lambda granted `GetObject*`, `GetBucket*`, `List*` permissions on Input bucket - **Issue #11**
+  - S3 write access: Lambda granted `PutObject*`, `Abort*`, `DeleteObject*` permissions on Output bucket - **Issue #11**
+  - Polly access: Lambda granted `SynthesizeSpeech` permission for speech synthesis - **Issue #11**
+  - X-Ray tracing: Lambda granted `PutTraceSegments`, `PutTelemetryRecords` permissions
   - State machine permissions: Granted `lambda:InvokeFunction` on specific Lambda ARN
   - All IAM policies follow least-privilege principle
 
 - ✅ **Updated State Machine Flow**
   - InitMetadata → ValidateInput → **ProcessAudio** → PollyTask → UpdateStatusCompleted → NotifySuccess → End
   - Error Catch on ProcessAudio → UpdateStatusFailed → NotifyFailure → End
-  - Lambda integration adds processing step between validation and audio generation
+  - Lambda integration adds full audio processing between validation and Polly task
 
 ### Completed (Issue #8)
 - ✅ **Input Validation State** (`ValidateInput`)
@@ -263,8 +274,62 @@
     - Structured logging presence in Lambda handler
   - All tests follow TDD approach (written before implementation)
 
+### Completed (Issue #11)
+- ✅ **Full Audio Processing Implementation**
+  - Lambda function now performs real audio processing (not placeholder)
+  - Download input file metadata from S3 (file size extraction)
+  - Generate sleep audio using Amazon Polly:
+    - Neural voice engine for natural sounding speech
+    - Voice: Joanna (calm, soothing)
+    - Output format: MP3
+    - Soothing sleep relaxation script
+  - Upload processed audio to Output S3 bucket:
+    - Path: `processed/{audioId}/{filename}-sleep-audio.mp3`
+    - Content-Type: audio/mpeg
+    - Metadata: generated-by, generated-at timestamp
+  - Update DynamoDB with complete output information:
+    - `outputKey`: S3 key of processed audio
+    - `outputBucket`: Output bucket name
+    - `outputFileSize`: Size in bytes of generated audio
+    - `status`: Updated to "COMPLETED"
+    - `processedAt`: Completion timestamp
+
+- ✅ **S3 Integration**
+  - Input bucket: Read permissions for Lambda
+  - Output bucket: Write permissions for Lambda
+  - Graceful error handling for S3 operations
+  - Metadata preservation and tagging
+
+- ✅ **Polly Integration**
+  - SynthesizeSpeech permission granted to Lambda
+  - Neural engine for high-quality voice synthesis
+  - MP3 output format for compatibility
+  - Stream handling for efficient memory usage
+
+- ✅ **Enhanced DynamoDB Metadata**
+  - New fields: `outputKey`, `outputBucket`, `outputFileSize`
+  - Status management: PROCESSING → COMPLETED
+  - Timestamp tracking: `processedAt`
+  - Atomic updates with conditional expressions
+
+- ✅ **Structured Response**
+  - Lambda returns comprehensive metadata:
+    - Input: bucket, key, file size
+    - Output: bucket, key, file size
+    - Processing: audioId, status, timestamp
+  - Error responses include detailed error information
+  - State machine receives structured data for downstream processing
+
+- ✅ **Testing**
+  - 7 new tests for Issue #11
+  - Total: 92 tests passing (85 original + 7 new)
+  - Tests verify:
+    - Environment variables (INPUT_BUCKET_NAME, OUTPUT_BUCKET_NAME)
+    - S3 read/write permissions
+    - Polly permissions
+    - Memory and timeout configuration
+
 ### Pending
-- Full audio processing workflow (multi-step state machine with additional Lambda functions)
 - Amazon Bedrock integration (optional, feature-flagged)
 - SNS topic subscriptions (email, SQS, etc.)
 - Deployment to AWS environment
@@ -338,13 +403,29 @@ clear observability and least-privilege security.
      - Sets `$.error.Error` to "ValidationError"
      - Sets `$.error.Cause` to descriptive message
      - Routes to UpdateStatusFailed for consistent error handling
-   - **ProcessAudio State (Lambda)** — Invokes the SleepAudioProcessor Lambda
-     function using `lambda:invoke`. This is a placeholder for future audio
-     processing, metadata enrichment, or validation logic. Currently, the Lambda:
+   - **ProcessAudio State (Lambda)** — **ENHANCED in Issue #11**: Invokes the
+     SleepAudioProcessor Lambda function using `lambda:invoke`. This Lambda performs
+     full audio processing:
      - Receives the full state machine context including metadata from InitMetadata
-     - Logs the input for debugging and observability
-     - Updates the DynamoDB record with a `processedAt` timestamp
-     - Returns a success response with status and audioId
+     - Extracts audioId, inputBucket, and inputKey from DynamoDB metadata
+     - Downloads input file metadata from S3 (retrieves file size)
+     - Generates sleep audio using Amazon Polly:
+       * Uses neural voice engine (Joanna) for natural sounding speech
+       * Synthesizes calming sleep relaxation script
+       * Outputs MP3 format audio stream
+     - Uploads processed audio to Output S3 bucket:
+       * Path: `processed/{audioId}/{filename}-sleep-audio.mp3`
+       * Includes metadata tags (generated-by, generated-at)
+     - Updates DynamoDB with output information:
+       * `outputKey`: S3 key of processed audio
+       * `outputBucket`: Output bucket name  
+       * `outputFileSize`: Size in bytes
+       * `status`: "COMPLETED"
+       * `processedAt`: Timestamp
+     - Returns success response with comprehensive metadata:
+       * Input details (bucket, key, file size)
+       * Output details (bucket, key, file size)
+       * Processing details (audioId, status, timestamp)
      - Error handling: Exceptions are caught and returned as error responses;
        Catch block routes Lambda errors to UpdateStatusFailed
    - **Polly Task** — The skeleton state machine includes a Polly task that uses
@@ -364,17 +445,20 @@ clear observability and least-privilege security.
    - **CloudWatch Logs** — All state machine execution events are logged to
      CloudWatch Logs with ALL level logging and execution data included.
    
-   **Future Steps (Pending):**
-   - **Validate** — confirm the object exists, the content type/size is within
-     limits, and required metadata is present. Invalid inputs short-circuit to
-     the failure path.
-   - **Extract metadata** — read duration, format, sample rate, and size.
-   - **Generate / enhance** *(conditional)* —
-     - **Amazon Polly** synthesizes soothing narration from text input.
-     - **Amazon Bedrock** generates ambient sleep sounds or enhances the audio.
-       This branch is optional and feature-flagged per environment.
-   - **Persist output** — write the processed object to the **output bucket**
-     under `processed/{user_id}/{upload_id}.{ext}` with **versioning enabled**.
+   **Completed Steps (Issue #11):**
+   - ✅ **Download input** — Lambda retrieves input file metadata from S3
+   - ✅ **Extract metadata** — Lambda gets file size and other S3 metadata
+   - ✅ **Generate audio** — Amazon Polly synthesizes soothing sleep audio with neural voice
+   - ✅ **Persist output** — Lambda writes processed audio to Output S3 bucket under
+     `processed/{audioId}/{filename}-sleep-audio.mp3` with **versioning enabled**
+   - ✅ **Update metadata** — Lambda updates DynamoDB with output location, file sizes, and status
+   
+   **Future Steps (Potential Enhancements):**
+   - **Validate** — enhance validation to check content type, file size limits, and additional metadata
+   - **Advanced processing** *(conditional)* —
+     - **Audio enhancement** — normalize volume, apply filters, mix with background sounds
+     - **Amazon Bedrock** — generate custom ambient sleep sounds or enhance audio with AI
+      This branch is optional and feature-flagged per environment
 4. **Notify.** On completion the state machine publishes to an **SNS topic**:
    a success message to the **CompletedTopic** with the output location, or a
    failure message to the **FailedTopic** with the error information.
