@@ -1,5 +1,7 @@
 # Project Summary — Event-Driven Sleep Audio Pipeline
 
+> **🧪 Experimental Project**: This is a proof-of-concept for **agentic Test-Driven Development (TDD) Infrastructure as Code**. Every feature was implemented through pure issue-driven development with GitHub Copilot, following strict TDD principles. See [`META-PROMPTS.md`](META-PROMPTS.md) for extracted reusable patterns.
+
 ## Overview
 
 This project implements a fully serverless, event-driven audio processing pipeline on AWS using Infrastructure as Code (CDK with C#/.NET 8). The system transforms uploaded audio files into soothing sleep audio using Amazon Polly's neural text-to-speech engine, with complete metadata tracking, error handling, and notifications.
@@ -118,7 +120,7 @@ This project implements a fully serverless, event-driven audio processing pipeli
 
 ## Development Timeline
 
-The project was completed through 12 issues following strict TDD:
+The project was completed through 13 issues following strict TDD:
 
 1. **Issue #2**: Project structure and CI setup
 2. **Issue #3**: S3 buckets and EventBridge integration
@@ -130,7 +132,8 @@ The project was completed through 12 issues following strict TDD:
 8. **Issue #9**: Retry policies and X-Ray tracing
 9. **Issue #10**: CloudWatch Alarms
 10. **Issue #11**: Full audio processing with Polly
-11. **Issue #12**: End-to-end validation and documentation polish (this issue)
+11. **Issue #12**: End-to-end validation and documentation polish
+12. **Issue #13**: Documentation review and meta-prompting patterns extraction
 
 Each issue followed the Red-Green-Refactor cycle:
 - Write failing tests first
@@ -138,6 +141,12 @@ Each issue followed the Red-Green-Refactor cycle:
 - Refactor while keeping tests green
 - Update architecture documentation
 - Verify CDK synth and CI pass
+
+**Key Experimental Outcomes:**
+- Demonstrated viability of pure issue-driven development
+- Proved TDD works for infrastructure (98 tests, 100% pass rate)
+- Extracted reusable patterns into [`META-PROMPTS.md`](META-PROMPTS.md)
+- Created templates for future agentic IaC projects
 
 ## Achievements
 
@@ -200,7 +209,9 @@ The system is ready for deployment:
 
 This project demonstrates a complete, production-ready serverless architecture built with Infrastructure as Code following strict TDD principles. The system is secure, scalable, observable, and cost-effective, ready for real-world deployment or as a foundation for future experimentation.
 
-**Total Development Effort**: 12 issues, ~98 tests, ~40+ AWS resources, 100% serverless, 0% idle cost.
+**Total Development Effort**: 13 issues, 98 tests, 40+ AWS resources, 100% serverless, 0% idle cost.
+
+**Reusable Artifacts**: See [`META-PROMPTS.md`](META-PROMPTS.md) for patterns, meta-prompts, and templates extracted from this project for use in future agentic TDD IaC projects.
 
 ---
 
