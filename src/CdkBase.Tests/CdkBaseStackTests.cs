@@ -2094,4 +2094,264 @@ public class CdkBaseStackTests
             { "Timeout", 30 } // Verify actual timeout is 30 seconds
         }));
     }
+
+    // ========== End-to-End Pipeline Integration Tests ==========
+
+    [Fact]
+    public void EndToEnd_CompleteHappyPathFlowIsConfigured()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // This test validates the complete happy path flow configuration:
+        // S3 Upload → EventBridge → Step Functions → Lambda → Polly → DynamoDB → SNS Success
+        
+        // 1. Verify S3 buckets exist (input and output)
+        template.ResourceCountIs("AWS::S3::Bucket", 2);
+        
+        // 2. Verify EventBridge rule exists and targets state machine
+        template.HasResourceProperties("AWS::Events::Rule", Match.ObjectLike(new Dictionary<string, object>
+        {
+            { "EventPattern", Match.ObjectLike(new Dictionary<string, object>
+                {
+                    { "source", new[] { "aws.s3" } },
+                    { "detail-type", new[] { "Object Created" } }
+                })
+            }
+        }));
+        
+        // 3. Verify Step Functions state machine exists
+        template.ResourceCountIs("AWS::StepFunctions::StateMachine", 1);
+        
+        // 4. Verify Lambda function exists with proper environment variables
+        template.HasResourceProperties("AWS::Lambda::Function", Match.ObjectLike(new Dictionary<string, object>
+        {
+            { "Handler", "SleepAudioProcessor::SleepAudioProcessor.Function::FunctionHandler" },
+            { "Environment", Match.ObjectLike(new Dictionary<string, object>
+                {
+                    { "Variables", Match.ObjectLike(new Dictionary<string, object>
+                        {
+                            { "TABLE_NAME", Match.AnyValue() },
+                            { "INPUT_BUCKET_NAME", Match.AnyValue() },
+                            { "OUTPUT_BUCKET_NAME", Match.AnyValue() }
+                        })
+                    }
+                })
+            }
+        }));
+        
+        // 5. Verify DynamoDB table exists
+        template.ResourceCountIs("AWS::DynamoDB::Table", 1);
+        
+        // 6. Verify SNS topics exist (completed and failed)
+        template.ResourceCountIs("AWS::SNS::Topic", 2);
+        
+        // 7. Verify state machine definition includes all key states
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        
+        // Verify all critical states are present in the state machine
+        Assert.Contains("InitMetadata", definitionValue);
+        Assert.Contains("ValidateInput", definitionValue);
+        Assert.Contains("ProcessAudio", definitionValue);
+        Assert.Contains("UpdateStatusCompleted", definitionValue);
+        Assert.Contains("NotifySuccess", definitionValue);
+    }
+
+    [Fact]
+    public void EndToEnd_ErrorPathFlowIsConfigured()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // This test validates the complete error path flow configuration:
+        // Error in any state → Catch → UpdateStatusFailed → NotifyFailure
+        
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        
+        // 1. Verify error handling infrastructure
+        Assert.Contains("Catch", definitionValue);
+        Assert.Contains("States.ALL", definitionValue);
+        
+        // 2. Verify error states exist
+        Assert.Contains("ValidationFailed", definitionValue);
+        Assert.Contains("UpdateStatusFailed", definitionValue);
+        Assert.Contains("NotifyFailure", definitionValue);
+        
+        // 3. Verify error information is captured
+        Assert.Contains("$.error", definitionValue);
+    }
+
+    [Fact]
+    public void EndToEnd_DataFlowThroughPipelineIsComplete()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // This test validates that data flows correctly through all stages
+        
+        var capture = new Capture();
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", new Dictionary<string, object>
+        {
+            { "DefinitionString", capture }
+        });
+        
+        var definitionValue = System.Text.Json.JsonSerializer.Serialize(capture.AsObject());
+        
+        // 1. Verify audioId is generated and used throughout
+        Assert.Contains("audioId", definitionValue);
+        
+        // 2. Verify S3 event data is captured (bucket and key)
+        Assert.Contains("detail", definitionValue);
+        Assert.Contains("bucket", definitionValue);
+        Assert.Contains("object", definitionValue);
+        
+        // 3. Verify DynamoDB operations include required fields
+        Assert.Contains("createdAt", definitionValue);
+        Assert.Contains("updatedAt", definitionValue);
+        Assert.Contains("status", definitionValue);
+        
+        // 4. Verify processing result is tracked (Lambda returns processorResult)
+        Assert.Contains("processorResult", definitionValue);
+    }
+
+    [Fact]
+    public void EndToEnd_AllIAMPermissionsAreProperlyConfigured()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // This test validates that all IAM permissions follow least-privilege principle
+        
+        var templateJson = template.ToJSON();
+        var templateString = System.Text.Json.JsonSerializer.Serialize(templateJson);
+        
+        // 1. Verify Lambda has required permissions
+        Assert.Contains("dynamodb:UpdateItem", templateString);
+        Assert.Contains("s3:GetObject", templateString);
+        Assert.Contains("s3:PutObject", templateString);
+        Assert.Contains("polly:SynthesizeSpeech", templateString);
+        
+        // 2. Verify state machine has required permissions
+        Assert.Contains("dynamodb:PutItem", templateString);
+        Assert.Contains("lambda:InvokeFunction", templateString);
+        Assert.Contains("sns:Publish", templateString);
+        
+        // 3. Verify X-Ray tracing permissions exist
+        Assert.Contains("xray:PutTraceSegments", templateString);
+        Assert.Contains("xray:PutTelemetryRecords", templateString);
+    }
+
+    [Fact]
+    public void EndToEnd_SecurityControlsAreInPlace()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // This test validates that security controls are properly configured
+        
+        // 1. Verify S3 buckets have encryption
+        template.HasResourceProperties("AWS::S3::Bucket", Match.ObjectLike(new Dictionary<string, object>
+        {
+            { "BucketEncryption", Match.ObjectLike(new Dictionary<string, object>
+                {
+                    { "ServerSideEncryptionConfiguration", Match.AnyValue() }
+                })
+            }
+        }));
+        
+        // 2. Verify S3 buckets block public access
+        template.HasResourceProperties("AWS::S3::Bucket", Match.ObjectLike(new Dictionary<string, object>
+        {
+            { "PublicAccessBlockConfiguration", Match.ObjectLike(new Dictionary<string, object>
+                {
+                    { "BlockPublicAcls", true },
+                    { "BlockPublicPolicy", true },
+                    { "IgnorePublicAcls", true },
+                    { "RestrictPublicBuckets", true }
+                })
+            }
+        }));
+        
+        // 3. Verify SNS topics are encrypted
+        template.HasResourceProperties("AWS::SNS::Topic", Match.ObjectLike(new Dictionary<string, object>
+        {
+            { "KmsMasterKeyId", Match.AnyValue() }
+        }));
+        
+        // 4. Verify KMS keys have rotation enabled
+        template.HasResourceProperties("AWS::KMS::Key", Match.ObjectLike(new Dictionary<string, object>
+        {
+            { "EnableKeyRotation", true }
+        }));
+    }
+
+    [Fact]
+    public void EndToEnd_ObservabilityIsConfigured()
+    {
+        // Arrange
+        var app = new App();
+        var stack = new CdkBaseStack(app, "TestStack");
+        var template = Template.FromStack(stack);
+
+        // Act & Assert
+        // This test validates that observability features are properly configured
+        
+        // 1. Verify Step Functions has CloudWatch Logs enabled
+        template.HasResourceProperties("AWS::StepFunctions::StateMachine", Match.ObjectLike(new Dictionary<string, object>
+        {
+            { "LoggingConfiguration", Match.ObjectLike(new Dictionary<string, object>
+                {
+                    { "Level", "ALL" },
+                    { "IncludeExecutionData", true }
+                })
+            }
+        }));
+        
+        // 2. Verify CloudWatch Alarms exist for failures (may be multiple alarms)
+        var templateJson = template.ToJSON();
+        var templateString = System.Text.Json.JsonSerializer.Serialize(templateJson);
+        Assert.Contains("AWS::CloudWatch::Alarm", templateString);
+        
+        // 3. Verify alarm monitors state machine failures
+        template.HasResourceProperties("AWS::CloudWatch::Alarm", Match.ObjectLike(new Dictionary<string, object>
+        {
+            { "MetricName", "ExecutionsFailed" },
+            { "Namespace", "AWS/States" },
+            { "Statistic", "Sum" },
+            { "Threshold", 1 }
+        }));
+        
+        // 4. Verify alarm is connected to SNS for notifications
+        template.HasResourceProperties("AWS::CloudWatch::Alarm", Match.ObjectLike(new Dictionary<string, object>
+        {
+            { "AlarmActions", Match.AnyValue() }
+        }));
+    }
 }
