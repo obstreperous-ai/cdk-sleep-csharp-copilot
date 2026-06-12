@@ -633,7 +633,7 @@ Known Issues and Solutions:
 1. Lambda Path Handling:
    Problem: Asset path not found in tests
    Solution: Use absolute paths consistent with CI environment
-   Example: /tmp/workspace/org/repo/src/Lambda/bin/Release/net8.0/publish
+   Example: /tmp/workspace/[org]/[repo]/src/Lambda/bin/Release/net8.0/publish
 
 2. State Machine Token Handling:
    Problem: CDK tokens in DefinitionString cause string assertion failures
