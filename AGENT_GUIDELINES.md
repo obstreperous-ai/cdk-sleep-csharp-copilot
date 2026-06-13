@@ -4,6 +4,8 @@ These guidelines apply to all contributors and AI agents working in this
 repository. They are intentionally short; the goal is consistent, test-first,
 incremental delivery of the system described in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
+**For detailed patterns and meta-prompts**, see [`META-PROMPTS.md`](./META-PROMPTS.md) — a comprehensive guide to reusable patterns extracted from this project.
+
 ## Source of Truth
 
 [`ARCHITECTURE.md`](./ARCHITECTURE.md) is the **single source of truth** for the
@@ -47,3 +49,28 @@ npx -y aws-cdk synth
 - **Multi-environment aware** — respect CDK context (`dev`/`stage`/`prod`).
 - **Docs stay current** — update `ARCHITECTURE.md` and other docs when behavior
   or design changes.
+
+## Additional Resources
+
+- [`META-PROMPTS.md`](./META-PROMPTS.md) — Detailed patterns, meta-prompts, and reusable templates for TDD IaC
+- [`ARCHITECTURE.md`](./ARCHITECTURE.md) — System design and implementation status
+- [`SUMMARY.md`](./SUMMARY.md) — Project timeline, decisions, and lessons learned
+
+## Quick Reference
+
+**Build & Test Commands:**
+```bash
+dotnet restore src/CdkBase.sln
+dotnet test src/CdkBase.sln --no-restore
+npx -y aws-cdk synth
+```
+
+**TDD Cycle:**
+1. 🔴 Red — Write failing test
+2. 🟢 Green — Minimum code to pass
+3. 🔵 Refactor — Clean up
+
+**Documentation Updates:**
+- Code change → Update `ARCHITECTURE.md`
+- New pattern → Consider adding to `META-PROMPTS.md`
+- Design decision → Document in `SUMMARY.md`
