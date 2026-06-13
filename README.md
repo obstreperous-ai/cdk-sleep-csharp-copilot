@@ -8,7 +8,7 @@
 
 A fully serverless, event-driven AWS CDK application that processes audio files into soothing sleep audio using AWS managed services.
 
-**🧪 Experiment Notice**: This project is a **TDD IaC experiment** built entirely through pure issue-driven development with GitHub Copilot. Every feature was delivered through strict Test-Driven Development, demonstrating agentic infrastructure development patterns.
+**🧪 Experiment Notice**: This project is a **TDD IaC experiment** built entirely through pure issue-driven development with GitHub Copilot. Every feature was delivered through strict Test-Driven Development, demonstrating agentic infrastructure development patterns. See [`EXPERIMENT.md`](EXPERIMENT.md) for complete experimental design and methodology.
 
 ## 📑 Table of Contents
 
@@ -225,6 +225,7 @@ aws s3 ls s3://<output-bucket-name>/processed/
 
 ## 📚 Documentation
 
+* [`EXPERIMENT.md`](EXPERIMENT.md) — **Experimental design & methodology** (start here for research context)
 * [`ARCHITECTURE.md`](ARCHITECTURE.md) — Complete system architecture and design decisions
 * [`AGENT_GUIDELINES.md`](AGENT_GUIDELINES.md) — TDD guidelines and contribution workflow
 * [`META-PROMPTS.md`](META-PROMPTS.md) — Reusable patterns and meta-prompts for agentic TDD IaC
