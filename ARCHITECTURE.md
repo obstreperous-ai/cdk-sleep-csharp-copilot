@@ -14,6 +14,9 @@
 > implementing **comprehensive end-to-end integration tests**, **polished documentation** (README, SUMMARY),
 > and **final validation**. The project is ready for deployment or production use.
 >
+> **🧪 Experimental Context**: This is part of an agentic TDD IaC experiment. See [`EXPERIMENT.md`](EXPERIMENT.md) 
+> for complete experimental design, methodology, and observations.
+>
 > This document is the **single source of truth** for the system design. Every
 > future issue and pull request must keep the code and this document consistent.
 > If an implementation needs to diverge from this design, update this document in

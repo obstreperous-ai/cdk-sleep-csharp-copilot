@@ -1,6 +1,6 @@
 # Project Summary — Event-Driven Sleep Audio Pipeline
 
-> **🧪 Experimental Project**: This is a proof-of-concept for **agentic Test-Driven Development (TDD) Infrastructure as Code**. Every feature was implemented through pure issue-driven development with GitHub Copilot, following strict TDD principles. See [`META-PROMPTS.md`](META-PROMPTS.md) for extracted reusable patterns.
+> **🧪 Experimental Project**: This is a proof-of-concept for **agentic Test-Driven Development (TDD) Infrastructure as Code**. Every feature was implemented through pure issue-driven development with GitHub Copilot, following strict TDD principles. See [`EXPERIMENT.md`](EXPERIMENT.md) for complete experimental design and methodology, and [`META-PROMPTS.md`](META-PROMPTS.md) for extracted reusable patterns.
 
 ## Overview
 
