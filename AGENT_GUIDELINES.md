@@ -52,6 +52,7 @@ npx -y aws-cdk synth
 
 ## Additional Resources
 
+- [`EXPERIMENT.md`](./EXPERIMENT.md) — Complete experimental design and research methodology
 - [`META-PROMPTS.md`](./META-PROMPTS.md) — Detailed patterns, meta-prompts, and reusable templates for TDD IaC
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — System design and implementation status
 - [`SUMMARY.md`](./SUMMARY.md) — Project timeline, decisions, and lessons learned

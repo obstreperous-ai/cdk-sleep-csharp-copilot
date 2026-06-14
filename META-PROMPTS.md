@@ -2,6 +2,8 @@
 
 This document extracts reusable patterns, meta-prompts, and agent guidelines from the Event-Driven Sleep Audio Pipeline project. These patterns can be applied to future agentic TDD Infrastructure as Code (IaC) projects.
 
+> **🧪 Experimental Context**: This document was extracted from an agentic TDD IaC experiment. See [`EXPERIMENT.md`](EXPERIMENT.md) for complete experimental design and research methodology.
+
 ## 🎯 Project Philosophy
 
 ### Pure Issue-Driven Development
