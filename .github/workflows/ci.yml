@@ -30,8 +30,18 @@ jobs:
       - name: Restore
         run: dotnet restore src/CdkBase.sln
 
+      - name: Publish Lambda
+        run: dotnet publish src/SleepAudioProcessor/SleepAudioProcessor.csproj -c Release -r linux-x64 --self-contained false -o /tmp/workspace/obstreperous-ai/cdk-sleep-csharp-copilot/src/SleepAudioProcessor/bin/Release/net8.0/publish
+
       - name: Test
-        run: dotnet test src/CdkBase.sln --no-restore
+        run: dotnet test src/CdkBase.sln --no-restore --collect:"XPlat Code Coverage" --logger "console;verbosity=normal"
+
+      - name: Upload Coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: '**/coverage.cobertura.xml'
+          fail_ci_if_error: false
 
       - name: CDK Synth
         run: npx -y aws-cdk synth
